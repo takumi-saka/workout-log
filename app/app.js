@@ -1,5 +1,6 @@
 const STORAGE_KEY = "workout-log-v1";
 const DRAFT_KEY = "workout-log-draft-v1";
+const LAST_BACKUP_KEY = "workout-log-last-backup-v1";
 const categories = ["胸", "背中", "脚", "肩", "二頭", "三頭", "前腕", "体幹", "その他"];
 
 window.addEventListener("error", (event) => {
@@ -88,6 +89,7 @@ const historyList = document.querySelector("#historyList");
 const screenTitle = document.querySelector("#screenTitle");
 const exerciseTemplate = document.querySelector("#exerciseTemplate");
 const toast = document.querySelector("#toast");
+const backupStatus = document.querySelector("#backupStatus");
 const sheetRoot = document.querySelector("#sheet");
 const sheetTitle = document.querySelector("#sheetTitle");
 const sheetForm = document.querySelector("#sheetForm");
@@ -787,14 +789,48 @@ async function copySummary(sessions = state.sessions.slice(-8)) {
   showToast("コピーしました");
 }
 
+function backupFileName() {
+  return `workout-backup-${todayIso()}.json`;
+}
+
+function backupBlob() {
+  return new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+}
+
+function markBackedUp() {
+  localStorage.setItem(LAST_BACKUP_KEY, new Date().toISOString());
+  renderBackupStatus();
+}
+
 function exportJson() {
-  const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+  const blob = backupBlob();
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `workout-backup-${todayIso()}.json`;
+  link.download = backupFileName();
   link.click();
   URL.revokeObjectURL(url);
+  markBackedUp();
+  showToast("バックアップを書き出しました");
+}
+
+async function shareJson() {
+  const file = new File([backupBlob()], backupFileName(), { type: "application/json" });
+  if (navigator.canShare && navigator.share && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({
+        files: [file],
+        title: "筋トレログ バックアップ",
+        text: "筋トレログのJSONバックアップです。",
+      });
+      markBackedUp();
+      showToast("共有しました");
+      return;
+    } catch (error) {
+      if (error && error.name === "AbortError") return;
+    }
+  }
+  exportJson();
 }
 
 function importJson(file) {
@@ -819,6 +855,32 @@ function importJson(file) {
     }
   };
   reader.readAsText(file);
+}
+
+async function persistStorage() {
+  if (!navigator.storage || typeof navigator.storage.persist !== "function") {
+    showToast("このブラウザでは未対応です");
+    renderBackupStatus();
+    return;
+  }
+  const persisted = await navigator.storage.persist();
+  renderBackupStatus();
+  showToast(persisted ? "保存データを保護しました" : "ブラウザ側で許可されませんでした");
+}
+
+async function renderBackupStatus() {
+  if (!backupStatus) return;
+  const lastBackup = localStorage.getItem(LAST_BACKUP_KEY);
+  let storageText = "端末保存: 未確認";
+  if (navigator.storage && typeof navigator.storage.persisted === "function") {
+    try {
+      storageText = (await navigator.storage.persisted()) ? "端末保存: 保護済み" : "端末保存: 通常";
+    } catch {
+      storageText = "端末保存: 未確認";
+    }
+  }
+  const backupText = lastBackup ? `最終バックアップ: ${shortDate(lastBackup.slice(0, 10))}` : "最終バックアップ: なし";
+  backupStatus.textContent = `${backupText} / ${storageText}`;
 }
 
 function showToast(message) {
@@ -1003,6 +1065,7 @@ function renderAll() {
   renderProgressDaySwitcher();
   renderProgress();
   renderMenuEditor();
+  renderBackupStatus();
 }
 
 document.querySelectorAll(".tab").forEach((tab) => {
@@ -1020,7 +1083,9 @@ document.querySelector("#downloadCsv").addEventListener("click", openCsvExportSh
 document.querySelector("#copySummary").addEventListener("click", openSummaryExportSheet);
 document.querySelector("#addExercise").addEventListener("click", addExercise);
 document.querySelector("#resetData").addEventListener("click", resetData);
+document.querySelector("#shareJson").addEventListener("click", shareJson);
 document.querySelector("#exportJson").addEventListener("click", exportJson);
+document.querySelector("#persistStorage").addEventListener("click", persistStorage);
 document.querySelector("#importJson").addEventListener("click", () => document.querySelector("#importJsonFile").click());
 document.querySelector("#importJsonFile").addEventListener("change", (event) => importJson(event.target.files[0]));
 sheetClose.addEventListener("click", closeSheet);

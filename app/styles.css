@@ -21,7 +21,9 @@
 html,
 body {
   margin: 0;
+  width: 100%;
   min-height: 100%;
+  overflow-x: hidden;
   background: var(--bg);
   color: var(--text);
   font-family:
@@ -47,8 +49,10 @@ button {
 
 .app-shell {
   width: min(100%, 440px);
+  max-width: 100%;
   min-height: 100dvh;
   position: relative;
+  overflow-x: hidden;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 180px),
     var(--bg);
@@ -94,11 +98,14 @@ h3 {
 }
 
 main {
+  min-width: 0;
   padding: 14px 14px calc(92px + env(safe-area-inset-bottom));
 }
 
 .screen {
   display: none;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .screen.active {
@@ -528,8 +535,14 @@ input[type="range"] {
 .chart-card,
 .mini-chart-card {
   position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   padding: 14px 14px 10px;
   overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
 }
 
@@ -610,6 +623,8 @@ input[type="range"] {
 
 .progress-area {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   gap: 12px;
 }
 
@@ -633,10 +648,14 @@ input[type="range"] {
 
 .exercise-chart-list {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   gap: 10px;
 }
 
 .exercise-chart {
+  min-width: 0;
+  max-width: 100%;
   padding: 12px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -689,9 +708,11 @@ input[type="range"] {
 
 .sheet {
   width: min(100%, 440px);
+  max-width: 100%;
   max-height: 86dvh;
   margin: 0 auto;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 14px 14px calc(18px + env(safe-area-inset-bottom));
   background: #111216;
   border: 1px solid var(--line);
@@ -713,6 +734,7 @@ input[type="range"] {
 
 .sheet-form {
   display: grid;
+  min-width: 0;
   gap: 10px;
 }
 
@@ -890,6 +912,13 @@ input[type="range"] {
 .danger-action {
   color: var(--danger);
   border-color: rgba(255, 121, 121, 0.35);
+}
+
+.backup-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .tabbar {

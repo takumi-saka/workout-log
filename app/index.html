@@ -7,7 +7,7 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <title>筋トレログ</title>
-    <link rel="stylesheet" href="./styles.css?v=9" />
+    <link rel="stylesheet" href="./styles.css?v=11" />
   </head>
   <body>
     <div class="app-shell">
@@ -55,8 +55,11 @@
             <h3>出力</h3>
             <button class="secondary-action" id="downloadCsv">CSVをダウンロード</button>
             <button class="secondary-action" id="copySummary">LLM用サマリーをコピー</button>
+            <button class="secondary-action" id="shareJson">バックアップを共有</button>
             <button class="secondary-action" id="exportJson">バックアップを書き出し</button>
             <button class="secondary-action" id="importJson">バックアップを読み込み</button>
+            <button class="secondary-action" id="persistStorage">保存データを保護</button>
+            <p class="backup-status" id="backupStatus"></p>
             <input id="importJsonFile" type="file" accept="application/json" hidden />
             <button class="secondary-action danger-action" id="resetData">保存データを初期化</button>
           </div>
@@ -105,7 +108,7 @@
       </article>
     </template>
 
-    <script src="./app.js?v=9"></script>
+    <script src="./app.js?v=11"></script>
     <script>
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker.register("./sw.js");

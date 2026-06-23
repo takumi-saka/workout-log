@@ -1,5 +1,6 @@
 const STORAGE_KEY = "workout-log-v1";
 const DRAFT_KEY = "workout-log-draft-v1";
+const DRAFTS_KEY = "workout-log-drafts-v1";
 const LAST_BACKUP_KEY = "workout-log-last-backup-v1";
 const categories = ["胸", "背中", "脚", "肩", "二頭", "三頭", "前腕", "体幹", "その他"];
 
@@ -112,22 +113,54 @@ function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
-function loadDraft() {
-  const saved = localStorage.getItem(DRAFT_KEY);
-  if (!saved) return null;
-  try {
-    return JSON.parse(saved);
-  } catch {
-    return null;
+function loadDrafts() {
+  const saved = localStorage.getItem(DRAFTS_KEY);
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch {
+      localStorage.removeItem(DRAFTS_KEY);
+    }
   }
+  const legacy = localStorage.getItem(DRAFT_KEY);
+  if (!legacy) return {};
+  try {
+    const parsed = JSON.parse(legacy);
+    if (parsed && parsed.dayId) {
+      localStorage.removeItem(DRAFT_KEY);
+      return { [parsed.dayId]: parsed };
+    }
+  } catch {
+    localStorage.removeItem(DRAFT_KEY);
+  }
+  return {};
+}
+
+function saveDrafts(drafts) {
+  localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
+}
+
+function loadDraft(dayId) {
+  return loadDrafts()[dayId] || null;
 }
 
 function saveDraft() {
   if (!draft || editingSessionId) return;
-  localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  const drafts = loadDrafts();
+  drafts[draft.dayId] = draft;
+  saveDrafts(drafts);
 }
 
-function clearDraft() {
+function clearDraft(dayId = selectedDayId) {
+  const drafts = loadDrafts();
+  delete drafts[dayId];
+  saveDrafts(drafts);
+  localStorage.removeItem(DRAFT_KEY);
+}
+
+function clearAllDrafts() {
+  localStorage.removeItem(DRAFTS_KEY);
   localStorage.removeItem(DRAFT_KEY);
 }
 
@@ -162,7 +195,7 @@ function renderDaySwitcher(container, selectedId, onSelect) {
 }
 
 function ensureDraft() {
-  const savedDraft = loadDraft();
+  const savedDraft = loadDraft(selectedDayId);
   if (!editingSessionId && savedDraft && savedDraft.dayId === selectedDayId) {
     draft = savedDraft;
     return;
@@ -180,7 +213,7 @@ function ensureDraft() {
       .filter((item) => item.enabled)
       .map((item) => {
         const last = lastExerciseRecord(item.id);
-        const previousWeight = last && last.maxWeight ? String(last.maxWeight) : "";
+        const previousWeight = last && hasValue(last.maxWeight) ? String(last.maxWeight) : "";
         return {
           exerciseId: item.id,
           name: item.name,
@@ -213,7 +246,7 @@ function previousText(exerciseId) {
   const last = lastExerciseRecord(exerciseId);
   if (!last) return "前回: なし";
   const reps = last.sets.map((set) => cleanNumber(set.reps)).filter(Boolean).join(", ");
-  return `前回: ${last.maxWeight || "-"}kg x ${reps || "-"}`;
+  return `前回: ${displayWeight(last.maxWeight)}kg x ${reps || "-"}`;
 }
 
 function renderRecord() {
@@ -310,6 +343,7 @@ function renderRecord() {
 function makeSetRow(exerciseIndex, setIndex, set) {
   const row = document.createElement("div");
   row.className = "set-row";
+  row.dataset.setIndex = String(setIndex);
   const number = document.createElement("div");
   number.className = "set-number";
   number.textContent = setIndex + 1;
@@ -328,19 +362,32 @@ function makeSetRow(exerciseIndex, setIndex, set) {
     saveDraft();
     renderRecord();
   });
-  row.append(
-    number,
-    makeStepper("kg", 2.5, set.weight, (value) => {
-      set.weight = value;
-      saveDraft();
-    }),
-    makeStepper("rep", 1, set.reps, (value) => {
-      set.reps = value;
-      saveDraft();
-    }),
-    deleteButton
-  );
+  const weightStepper = makeStepper("kg", 2.5, set.weight, (value) => {
+    const previousValue = set.weight;
+    set.weight = value;
+    if (setIndex === 0) syncFollowingWeights(exerciseIndex, previousValue, value);
+    saveDraft();
+  }, { allowNegative: entry.bodyweight });
+  const repStepper = makeStepper("rep", 1, set.reps, (value) => {
+    set.reps = value;
+    saveDraft();
+  });
+  row.append(number, weightStepper, repStepper, deleteButton);
   return row;
+}
+
+function syncFollowingWeights(exerciseIndex, previousValue, nextValue) {
+  const entry = draft.exercises[exerciseIndex];
+  if (!entry) return;
+  entry.sets.forEach((targetSet, index) => {
+    if (index === 0) return;
+    if (hasValue(targetSet.weight) && targetSet.weight !== previousValue) return;
+    targetSet.weight = nextValue;
+    const card = workoutArea.querySelectorAll(".exercise-card")[exerciseIndex];
+    const row = card && card.querySelector(`.set-row[data-set-index="${index}"]`);
+    const input = row && row.querySelector('.stepper[data-kind="kg"] input');
+    if (input) input.value = nextValue;
+  });
 }
 
 function renumberSets(entry) {
@@ -349,15 +396,17 @@ function renumberSets(entry) {
   });
 }
 
-function makeStepper(kind, step, initialValue, onChange) {
+function makeStepper(kind, step, initialValue, onChange, options = {}) {
   const wrapper = document.createElement("div");
   wrapper.className = "stepper";
+  wrapper.dataset.kind = kind;
   const minus = document.createElement("button");
   minus.textContent = "−";
   const input = document.createElement("input");
   input.inputMode = "decimal";
+  input.pattern = options.allowNegative ? "-?[0-9]*[.]?[0-9]*" : "[0-9]*[.]?[0-9]*";
   input.placeholder = kind;
-  input.value = initialValue || "";
+  input.value = hasValue(initialValue) ? initialValue : "";
   const plus = document.createElement("button");
   plus.textContent = "+";
   const setValue = (value) => {
@@ -365,10 +414,11 @@ function makeStepper(kind, step, initialValue, onChange) {
     onChange(value);
   };
   const update = (direction) => {
-    if (!input.value && direction < 0) return;
+    if (!input.value && direction < 0 && !options.allowNegative) return;
     const current = Number(input.value || 0);
-    const next = Math.max(0, current + direction * step);
-    if (next === 0 && direction < 0) return setValue("");
+    const rawNext = current + direction * step;
+    const next = options.allowNegative ? rawNext : Math.max(0, rawNext);
+    if (!options.allowNegative && next === 0 && direction < 0) return setValue("");
     setValue(Number.isInteger(next) ? String(next) : next.toFixed(1));
   };
   minus.addEventListener("click", () => update(-1));
@@ -400,7 +450,7 @@ function saveDraftSession() {
     state.sessions.push(session);
   }
   saveState();
-  clearDraft();
+  clearDraft(session.dayId);
   ensureDraft();
   renderAll();
   showToast("保存しました");
@@ -430,10 +480,11 @@ function normalizeSession(source) {
         weight: cleanNumber(set.weight),
         reps: cleanNumber(set.reps),
       }));
+      const weights = sets.map((set) => (hasValue(set.weight) ? set.weight : 0));
       return {
         ...entry,
         sets,
-        maxWeight: entry.skipped ? 0 : Math.max(0, ...sets.map((set) => set.weight || 0)),
+        maxWeight: entry.skipped ? 0 : Math.max(...weights),
       };
     }),
   };
@@ -443,6 +494,14 @@ function cleanNumber(value) {
   if (value === "" || value === null || value === undefined) return "";
   const number = Number(value);
   return Number.isFinite(number) ? number : "";
+}
+
+function hasValue(value) {
+  return value !== "" && value !== null && value !== undefined;
+}
+
+function displayWeight(value) {
+  return hasValue(value) ? value : "-";
 }
 
 function renderHistory() {
@@ -457,7 +516,7 @@ function renderHistory() {
     const summary = session.exercises
       .filter((item) => !item.skipped)
       .slice(0, 2)
-      .map((item) => `${item.name} ${item.maxWeight || "-"}kg`)
+      .map((item) => `${item.name} ${displayWeight(item.maxWeight)}kg`)
       .join(" / ");
     button.innerHTML = `
       <span class="date">${shortDate(session.date)}</span>
@@ -476,7 +535,7 @@ function showHistoryDetail(session) {
     .map((item) => {
       const sets = item.skipped
         ? "スキップ"
-        : item.sets.map((set) => `${set.weight || "-"}kg x ${set.reps || "-"}`).join(", ");
+        : item.sets.map((set) => `${displayWeight(set.weight)}kg x ${set.reps || "-"}`).join(", ");
       return `
         <div class="detail-item">
           <strong>${escapeHtml(item.name)}${item.isSubstitute ? "（代替）" : ""}</strong>
@@ -781,7 +840,7 @@ async function copySummary(sessions = state.sessions.slice(-8)) {
   const lines = sessions.map((session) => {
     const exercises = session.exercises
       .filter((item) => !item.skipped)
-      .map((item) => `- ${item.name}: ${item.sets.map((set) => `${set.weight || "-"}kg x ${set.reps || "-"}`).join(", ")}`)
+      .map((item) => `- ${item.name}: ${item.sets.map((set) => `${displayWeight(set.weight)}kg x ${set.reps || "-"}`).join(", ")}`)
       .join("\n");
     return `${session.date} ${session.dayLabel} ${session.dayName}\n${exercises}\nメモ: ${session.memo || "-"}`;
   });
@@ -845,7 +904,7 @@ function importJson(file) {
       selectedDayId = state.menu[0].id;
       selectedProgressDayId = state.menu[0].id;
       editingSessionId = null;
-      clearDraft();
+      clearAllDrafts();
       saveState();
       ensureDraft();
       renderAll();
@@ -1046,6 +1105,7 @@ function lastItem(items) {
 function resetData() {
   if (!window.confirm("保存済みの記録とメニュー編集をすべて初期化しますか？")) return;
   localStorage.removeItem(STORAGE_KEY);
+  clearAllDrafts();
   state = loadState();
   selectedDayId = state.menu[0].id;
   selectedProgressDayId = state.menu[0].id;

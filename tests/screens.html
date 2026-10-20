@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><title>画面の一覧（見本の記録入り）</title>
+<style>
+  body { margin: 0; padding: 20px; background: #e3e6ef; font-family: -apple-system, "Hiragino Sans", sans-serif; color: #101734; }
+  .g { display: grid; grid-template-columns: repeat(4, 400px); gap: 24px; }
+  figure { margin: 0; }
+  figcaption { font-size: 15px; font-weight: 700; margin: 0 0 8px; }
+  iframe { width: 400px; height: 860px; border: 0; border-radius: 36px; background: #fff; display: block; }
+</style></head>
+<body>
+<div class="g" id="g"></div>
+<script type="module">
+// 6週間分の見本の記録を入れてから、画面ごとに開いて並べる（スクリーンショット用）。
+import { defaultData, saveData } from "../app/src/store.js";
+import { newActive, completeCurrentSet, finishActive, currentEntry, activeSetIndex } from "../app/src/model.js";
+import { todayISO, addDays } from "../app/src/util.js";
+
+const BASE = {
+  "bench-press": [70, 2.5, 1], "chin-up": [0, 0, 1], "leg-press": [120, 5, 1], "lying-triceps-extension": [25, 2.5, 3], "dumbbell-curl": [10, 2, 3],
+  "v-squat": [100, 5, 1], "one-hand-cable-row": [30, 2.5, 2], "bulgarian-squat": [12, 2, 3], "machine-shoulder-press": [35, 5, 2], "hammer-curl": [12, 2, 3],
+  deadlift: [110, 2.5, 1], "incline-db-press": [22, 2, 2], "pec-fly": [40, 5, 3], "straight-arm-pulldown": [20, 2.5, 3], "straight-bar-pressdown": [25, 2.5, 3], "face-pull": [15, 2.5, 4],
+};
+const data = defaultData();
+const count = {};
+const today = todayISO();
+const cycle = ["day-a", "day-b", "day-c"];
+let k = 0;
+for (let back = 40; back >= 2; back -= 2, k++) {
+  const date = addDays(today, -back);
+  const a = newActive(data, cycle[k % 3], date);
+  let t = new Date(`${date}T19:00:00`);
+  a.startedAt = t.toISOString();
+  for (const e of a.entries) {
+    const [w0, step, every] = BASE[e.exerciseId];
+    const n = count[e.exerciseId] = (count[e.exerciseId] || 0) + 1;
+    const w = w0 + step * Math.floor((n - 1) / every);
+    a.currentKey = e.key;
+    e.sets.forEach((s, i) => { s.weight = w; s.reps = i === e.sets.length - 1 && n % 2 ? e.targetReps - 1 : e.targetReps; });
+    if (e.exerciseId === "chin-up" && n > 4) e.sets.forEach((s) => (s.weight = 2.5));
+    while (currentEntry(a) === e && activeSetIndex(e) >= 0) { t = new Date(t.getTime() + 150000); completeCurrentSet(data, a, t); }
+  }
+  const s = finishActive(data, a, { startedAt: a.startedAt, endedAt: new Date(t.getTime() + 120000).toISOString(), ratings: { pump: 6 + (k % 4), effort: 7, fatigue: 4 + (k % 3) }, memo: k % 5 === 0 ? "睡眠不足で少し重く感じた" : "" });
+  if (k === 15) s.entries[0].memo = "3セット目は4回で止めた。次は上げる";
+  data.sessions.push(s);
+}
+// 今日: A のベンチプレスを2セット終えたところ（2セット目が自己ベスト）
+const act = newActive(data, "day-a", today);
+act.createdOn = today;
+const bench = act.entries[0];
+const now = Date.now();
+act.startedAt = new Date(now - 18 * 60000).toISOString();
+bench.sets[0].done = true; bench.sets[0].doneAt = new Date(now - 8 * 60000).toISOString();
+bench.sets[1].weight = bench.sets[0].weight + 2.5; bench.sets[1].done = true; bench.sets[1].doneAt = new Date(now - 3 * 60000).toISOString();
+bench.sets[2].weight = bench.sets[1].weight;
+data.active = act;
+data.settings.lastBackupAt = new Date(now - 3 * 86400000).toISOString();
+saveData(data);
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const shots = [
+  ["1　記録（今やるセット）", async () => {}],
+  ["2　完了を押したあと（休憩）", async (q) => { q('[data-action="rec:complete"]').click(); }],
+  ["3　数字を押したとき（直接入力）", async (q) => { q("#wVal").click(); }],
+  ["4　時計を押したとき", async (q) => { q('[data-action="rec:clock"]').click(); }],
+  ["5　記録の下のほう", async (q, d) => { d.querySelector("#recScroller").scrollTop = 520; }],
+  ["6　記録を終える（まとめ）", async (q) => { q('[data-action="rec:finish"]').click(); }],
+  ["7　履歴", async (q) => { q('[data-tab="history"]').click(); }],
+  ["8　履歴の中身", async (q) => { q('[data-tab="history"]').click(); await sleep(100); q(".hist-card").click(); }],
+  ["9　進捗", async (q) => { q('[data-tab="progress"]').click(); }],
+  ["10　メニュー", async (q) => { q('[data-tab="menu"]').click(); }],
+  ["11　メニューの種目を直す", async (q) => { q('[data-tab="menu"]').click(); await sleep(100); q('[data-action="menu:day"][data-id="day-c"]').click(); await sleep(100); q('[data-action="menu:item"][data-i="5"]').click(); }],
+  ["12　設定", async (q) => { q('[data-action="go:settings"]').click(); }],
+];
+const g = document.getElementById("g");
+for (const [cap, drive] of shots) {
+  const fig = document.createElement("figure");
+  fig.innerHTML = `<figcaption>${cap}</figcaption>`;
+  const f = document.createElement("iframe");
+  fig.append(f);
+  g.append(fig);
+  await new Promise((res) => { f.onload = res; f.src = `../app/index.html?shot=${encodeURIComponent(cap)}`; });
+  await sleep(300);
+  const d = f.contentDocument;
+  await drive((s) => d.querySelector(s), d);
+  await sleep(150);
+  // 次の画面のために、記録中のデータを元に戻しておく
+  saveData(data);
+}
+document.title = "ready";
+</script>
+</body>
+</html>

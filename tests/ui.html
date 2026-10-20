@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><title>画面の動作確認</title></head>
+<body>
+<pre id="out">running</pre>
+<iframe id="f" style="width:400px;height:860px;border:0"></iframe>
+<script type="module">
+// 画面を実際に押して確かめる。リポジトリのルートを配信して tests/ui.html を開き、headless Chrome の --dump-dom で結果を読む。
+const f = document.getElementById("f");
+const lines = [];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let w, d, errors = [];
+
+async function load(setup) {
+  localStorage.clear();
+  if (setup) setup(localStorage);
+  await new Promise((res) => { f.onload = res; f.src = `../app/index.html?t=${Date.now()}`; });
+  await sleep(500);
+  w = f.contentWindow; d = f.contentDocument; errors = [];
+  w.addEventListener("error", (e) => errors.push(e.message));
+  w.addEventListener("unhandledrejection", (e) => errors.push(String(e.reason)));
+}
+const q = (s) => d.querySelector(s);
+const qa = (s) => [...d.querySelectorAll(s)];
+const text = (s) => (q(s)?.textContent || "").replace(/\s+/g, " ").trim();
+const app = () => w.__workoutLog.ctx;
+async function click(sel, idx = 0) {
+  const el = typeof sel === "string" ? qa(sel)[idx] : sel;
+  if (!el) throw new Error(`見つからない: ${sel}`);
+  el.click();
+  await sleep(80);
+}
+async function type(keys) {
+  for (const k of keys) await click(`[data-action="pad:key"][data-k="${k}"]`);
+  await click('[data-action="pad:done"]');
+}
+const check = (label, ok) => lines.push(`${ok ? "OK" : "NG"}  ${label}`);
+
+const V1 = {
+  menu: [{ id: "day1", label: "Day1", name: "胸＋三頭", exercises: [{ id: "bench-press", name: "ベンチプレス" }, { id: "dips", name: "ディップス" }] }],
+  sessions: [
+    { id: "s1", date: "2026-06-20", dayId: "day1", dayLabel: "Day1", dayName: "胸＋三頭", ratings: { pump: 5, effort: 7, fatigue: 4 }, memo: "", savedAt: "2026-06-20T10:00:00.000Z",
+      exercises: [{ exerciseId: "bench-press", name: "ベンチプレス", category: "胸", sets: [{ setNumber: 1, weight: 70, reps: 6 }, { setNumber: 2, weight: 70, reps: 6 }, { setNumber: 3, weight: 67.5, reps: 6 }] },
+        { exerciseId: "dips", name: "ディップス", category: "胸", skipped: false, sets: [{ setNumber: 1, weight: 10, reps: 10 }] }] },
+    { id: "s2", date: "2026-06-23", dayId: "day1", dayLabel: "Day1", dayName: "胸＋三頭", ratings: { pump: 6, effort: 6, fatigue: 5 }, memo: "", savedAt: "2026-06-23T10:00:00.000Z",
+      exercises: [{ exerciseId: "bench-press", name: "ベンチプレス", category: "胸", sets: [{ setNumber: 1, weight: 72.5, reps: 6 }] }] },
+  ],
+};
+
+async function run() {
+  /* ---- 1. はじめて開いたとき ---- */
+  await load();
+  check("起動する", !!w.__workoutLog);
+  check("最初は A のベンチプレス", text(".ex-name").startsWith("ベンチプレス") && text(".day-chip").includes("ベンチ中心"));
+  check("時間はスタートボタン", !!q('[data-action="rec:start"]'));
+  check("初めての種目は重さが空", text("#wVal").includes("—"));
+  await click('[data-action="rec:complete"]');
+  check("重さが空で完了を押すと数字キーが出る", !!q(".pad-keys"));
+  await type(["6", "0"]);
+  await sleep(100);
+  const a1 = app().data.active;
+  check("数字キーで60kgを入れて完了になる", a1.entries[0].sets[0].done && a1.entries[0].sets[0].weight === 60);
+  check("完了で休憩のカウントダウンになる", !!q("#recCountdown"));
+  check("押し忘れても時間を計り始める", !!a1.startedAt && !!q("#recElapsed"));
+  check("お知らせに元に戻すが出る", q("#toast").classList.contains("show") && !q("#toast .toast-btn").hidden);
+  check("残りのセットも60kgになる", a1.entries[0].sets[1].weight === 60 && a1.entries[0].sets[2].weight === 60);
+  await click('[data-action="rec:rest-skip"]');
+  check("次のセットへで2セット目の画面", text(".complete").includes("2セット目を完了"));
+  await click('[data-action="rec:adj"][data-f="w"][data-d="1"]');
+  check("+2.5 で 62.5kg", text("#wVal").includes("62.5"));
+  await click('[data-action="rec:key-r"]');
+  await type(["8"]);
+  check("回数を数字キーで8回に", app().data.active.entries[0].sets[1].reps === 8);
+  await click('[data-action="rec:key-w"]');
+  await type(["6", "1", ".", "2", "5"]);
+  check("重さを数字キーで 61.25kg に（細かい値も入る）", app().data.active.entries[0].sets[1].weight === 61.25);
+  await click('[data-action="rec:complete"]');
+  await click('[data-action="rec:rest-skip"]');
+  await click('[data-action="rec:complete"]');
+  check("ベンチを終えると次はチンニング（休憩中に案内）", text(".rest-head").includes("チンニング"));
+  await click('[data-action="rec:rest-skip"]');
+  check("チンニングは自重と表示", text("#wVal").includes("自重"));
+  await click('[data-action="rec:key-w"]');
+  await click('[data-action="pad:mode"][data-mode="assist"]');
+  await type(["1", "0"]);
+  check("数字キーで補助10kg", app().data.active.entries[1].sets[0].weight === -10 && text("#wVal").includes("補助"));
+  /* 種目の切り替えとスキップ */
+  const dc = app().data.active.entries.find((e) => e.exerciseId === "dumbbell-curl");
+  await click(`[data-action="rec:switch"][data-key="${dc.key}"]`);
+  check("ほかの種目を押すとダンベルカールに切り替わる", text(".ex-name").startsWith("ダンベルカール"));
+  check("ダンベルカールは2kg刻み", text('[data-action="rec:adj"][data-f="w"][data-d="1"]') === "+2");
+  await click('[data-action="rec:menu"]');
+  await click('[data-action="rec:skip"]');
+  check("スキップすると次の未完了（チンニング）へ", text(".ex-name").startsWith("チンニング"));
+  check("スキップした種目は一覧でスキップ表示", text(`[data-action="rec:switch"][data-key="${dc.key}"]`).includes("スキップ"));
+  await click('[data-action="toast:action"]');
+  check("元に戻すでスキップが取り消される", !app().data.active.entries.find((e) => e.exerciseId === "dumbbell-curl").skipped);
+  /* タイマー */
+  await click('[data-action="rec:clock"]');
+  check("時計を押すと始めた時刻を直せる", !!q("#startTimeInput"));
+  q("#startTimeInput").value = "00:01";
+  await click('[data-action="rec:clock-save"]');
+  check("始めた時刻を00:01に直せる", new Date(app().data.active.startedAt).getHours() === 0);
+  /* 終える */
+  await click('[data-action="rec:finish"]');
+  check("記録を終えるでまとめが出る", qa(".sheet h2").some((h) => h.textContent === "今日の記録"));
+  check("評価は最初は未入力", text("#rates").includes("未入力"));
+  await click('[data-action="rec:rate"][data-key="pump"][data-v="8"]');
+  check("評価を押すと数字が入る", text("#rates .rate-top span.set") === "8");
+  await click('[data-action="rec:save"]');
+  await sleep(150);
+  const data = app().data;
+  check("保存すると記録が1件になる", data.sessions.length === 1);
+  check("保存した記録はやったセットだけ（ベンチ3、完了していないチンニングはスキップ扱い）", data.sessions[0].entries[0].sets.length === 3 && data.sessions[0].entries[1].skipped && data.sessions[0].entries[1].sets.length === 0);
+  check("評価は押したものだけ入る", data.sessions[0].ratings.pump === 8 && data.sessions[0].ratings.effort === null);
+  check("保存すると次は B", data.active.dayId === "day-b" && text(".day-chip").includes("Vスクワット中心"));
+  check("保存のお知らせに次の Day が出る", text("#toast .toast-text").includes("次は B"));
+
+  /* ---- 2. 履歴 ---- */
+  await click('[data-action="go:tab"][data-tab="history"]');
+  check("履歴に1件出る", qa(".hist-card").length === 1);
+  check("カレンダーに今日の印", qa(".cal-day.has").length === 1);
+  await click(".hist-card");
+  check("押すと中身が出る", qa(".detail-entry").length >= 2);
+  await click('[data-action="hist:set"]');
+  await click('[data-action="hist:set-r"]');
+  await type(["9"]);
+  check("履歴のセットの回数を直せる", app().data.sessions[0].entries[0].sets[0].reps === 9);
+  await click('[data-action="sheet:close"]', 0).catch(() => {});
+
+  /* ---- 3. 進捗 ---- */
+  w.document.querySelectorAll(".sheet-wrap").forEach((x) => x.remove());
+  await click('[data-action="go:tab"][data-tab="progress"]');
+  await click('[data-action="prog:day"][data-id="day-a"]');
+  check("進捗に A の合計とベンチのグラフ", qa(".chart-card").length === 1 + 5 && qa(".chart .dot").length >= 1);
+
+  /* ---- 4. メニュー ---- */
+  await click('[data-action="go:tab"][data-tab="menu"]');
+  check("メニューに A・B・C", qa(".day-card").length === 3);
+  await click('[data-action="menu:day"][data-id="day-b"]');
+  await click('[data-action="menu:item"][data-i="0"]');
+  await click('[data-action="menu:it-adj"][data-f="sets"][data-d="1"]');
+  await click('[data-action="menu:it-rest"][data-v="240"]');
+  await click('[data-action="menu:it-save"]');
+  await click('[data-action="menu:day-save"]');
+  const vs = app().data.menu.days[1].items[0];
+  check("B の Vスクワットを4セット・休憩4分に直せる", vs.sets === 4 && vs.restSec === 240);
+  check("まだ何もしていない今日の記録に、直したメニューが入る", app().data.active.entries[0].sets.length === 4);
+  await click('[data-action="menu:day-move"][data-i="0"][data-d="1"]');
+  check("Day の順番を入れ替えられる", app().data.menu.days[0].id === "day-b");
+
+  /* ---- 5. 設定 ---- */
+  await click('[data-action="go:settings"]');
+  check("設定が開く", text("#screen-settings h1") === "設定");
+  await click('[data-action="set:export"][data-kind="llm"]');
+  check("LLM 用のまとめの条件が出て、対象の回数が出る", text("#fCount").includes("1回分"));
+  await click('[data-action="set:run"]');
+  await sleep(200);
+  check("コピーする（できないときは手でコピーする画面）", text("#toast .toast-text").includes("コピーしました") || !!q(".copy-box"));
+  check("ここまでエラーなし", errors.length === 0);
+  if (errors.length) lines.push("   " + errors.join(" / "));
+
+  /* ---- 6. 前のアプリからの引き継ぎ ---- */
+  await load((ls) => ls.setItem("workout-log-v1", JSON.stringify(V1)));
+  check("前のアプリの記録を2回分引き継いだとお知らせ", text("#toast .toast-text").includes("2回分引き継ぎました"));
+  check("引き継いだベンチの記録が前回の値になる（セットごと）", app().data.active.entries[0].sets.map((s) => s.weight).join(",") === "72.5,72.5,72.5");
+  check("前のアプリのデータは残っている", !!localStorage.getItem("workout-log-v1"));
+  await click('[data-action="go:tab"][data-tab="history"]');
+  check("引き継いだ記録が履歴に出る", qa(".hist-card").length === 2);
+
+  /* ---- 7. 日をまたいだ書きかけ ---- */
+  await load((ls) => {
+    ls.setItem("workout-log-v1", JSON.stringify({ menu: [], sessions: [] }));
+  });
+  const ctx = app();
+  const a = ctx.data.active;
+  a.entries[0].sets[0].weight = 80;
+  a.entries[0].sets[0].done = true;
+  a.entries[0].sets[0].doneAt = "2026-01-05T10:00:00.000Z";
+  a.date = "2026-01-05";
+  a.createdOn = "2026-01-05";
+  localStorage.setItem("workout-log-v2", JSON.stringify(ctx.data));
+  await new Promise((res) => { f.onload = res; f.contentWindow.location.reload(); });
+  await sleep(500);
+  w = f.contentWindow; d = f.contentDocument;
+  check("前の日の書きかけがあると、保存するか捨てるかを聞く", text(".sheet h2").includes("1月5日") && !!q('[data-action="rec:stale-save"]'));
+  await click('[data-action="rec:stale-save"]');
+  check("その日の記録として保存できる", app().data.sessions.length === 1 && app().data.sessions[0].date === "2026-01-05");
+
+  /* ---- 8. 日付が古いまま残らない ---- */
+  await load();
+  const c2 = app();
+  c2.data.active.date = "2026-01-01";
+  c2.data.active.createdOn = "2026-01-01";
+  localStorage.setItem("workout-log-v2", JSON.stringify(c2.data));
+  await new Promise((res) => { f.onload = res; f.contentWindow.location.reload(); });
+  await sleep(500);
+  w = f.contentWindow; d = f.contentDocument;
+  const today = new Date();
+  check("何も記録していなければ、開いたときは今日の日付", text(".date").includes(`${today.getMonth() + 1}月${today.getDate()}日`));
+}
+
+run().catch((e) => lines.push(`NG  途中で止まった: ${e.message}`)).finally(() => {
+  document.getElementById("out").textContent = lines.join("\n");
+});
+</script>
+</body>
+</html>

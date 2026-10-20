@@ -1,7 +1,7 @@
 // 設定の画面。書き出し（CSV・LLM 用のまとめ）、バックアップ、保存の状態、全部消す。
 
 import { ctx, setRenderer, commit } from "../app-state.js";
-import { register, $, ICON, openSheet, closeSheet, toast, confirmSheet, downloadFile, copyText } from "../ui.js";
+import { register, $, ICON, openSheet, closeSheet, toast, confirmSheet, downloadFile, copyText, bridge } from "../ui.js";
 import { ensureActive } from "./record.js";
 import { filterSessions, toCSV, toLLMText } from "../export.js";
 import { backupText, dataFromBackup, defaultData } from "../store.js";
@@ -121,9 +121,9 @@ register({
     const sessions = filterSessions(ctx.data, f);
     if (!sessions.length) return toast("この条件に合う記録はありません");
     if (el.dataset.kind === "csv") {
-      downloadFile(`workout-log-${todayISO()}.csv`, toCSV(ctx.data, sessions), "text/csv;charset=utf-8");
+      const where = downloadFile(`workout-log-${todayISO()}.csv`, toCSV(ctx.data, sessions), "text/csv;charset=utf-8");
       closeSheet();
-      return toast(`CSV を書き出しました（${sessions.length}回分）`);
+      return toast(where === "app" ? "保存先を選んでください" : `CSV を書き出しました（${sessions.length}回分）`);
     }
     const text = toLLMText(ctx.data, sessions);
     if (await copyText(text)) {
@@ -134,6 +134,11 @@ register({
   },
   "set:share": async () => {
     const text = backupText(ctx.data);
+    if (bridge) {
+      downloadFile(backupName(), text, "application/json");
+      markBackup();
+      return toast("保存先を選んでください（Google ドライブも選べます）");
+    }
     const file = new File([text], backupName(), { type: "application/json" });
     if (navigator.canShare && navigator.share && navigator.canShare({ files: [file] })) {
       try {
@@ -149,9 +154,9 @@ register({
     toast("共有できなかったので、ファイルに書き出しました");
   },
   "set:download": () => {
-    downloadFile(backupName(), backupText(ctx.data), "application/json");
+    const where = downloadFile(backupName(), backupText(ctx.data), "application/json");
     markBackup();
-    toast("バックアップを書き出しました");
+    toast(where === "app" ? "保存先を選んでください" : "バックアップを書き出しました");
   },
   "set:restore": (el) => {
     const file = el.files && el.files[0];

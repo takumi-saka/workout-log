@@ -60,6 +60,9 @@ export function setThemeColor() {
     color = (KITS[day ? day.kit : "a"] || KITS.a).color;
   }
   meta.setAttribute("content", color);
+  if (globalThis.AndroidBridge) {
+    try { globalThis.AndroidBridge.setStatusBarColor(color === "#f2f4f9" ? "#101734" : color); } catch { /* 何もしない */ }
+  }
 }
 
 export function dayOf(dayId) {

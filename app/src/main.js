@@ -2,7 +2,7 @@
 
 import { ctx, go } from "./app-state.js";
 import { loadData } from "./store.js";
-import { initEvents, register, toast, closeAllSheets } from "./ui.js";
+import { initEvents, register, toast, closeAllSheets, bridge } from "./ui.js";
 import { hasProgress } from "./model.js";
 import { ensureActive, tickRecord, renderRecord } from "./screens/record.js";
 import "./screens/history.js";
@@ -18,6 +18,10 @@ let wakeLock = null;
 async function updateWakeLock() {
   const a = ctx.data && ctx.data.active;
   const want = ctx.screen === "record" && document.visibilityState === "visible" && !!a && (!!a.startedAt || hasProgress(a));
+  if (bridge) {
+    try { bridge.keepScreenOn(want); } catch { /* 何もしない */ }
+    return;
+  }
   if (want && !wakeLock && "wakeLock" in navigator) {
     try {
       wakeLock = await navigator.wakeLock.request("screen");

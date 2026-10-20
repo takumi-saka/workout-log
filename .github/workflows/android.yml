@@ -1,0 +1,42 @@
+name: Build Android app
+
+# main に入れるたびに、スマホに入れるアプリのファイル（APK）を作り、
+# https://github.com/takumi-saka/workout-log/releases/download/app-latest/workout-log.apk に置く。
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+      - name: Build APK
+        run: gradle -p android assembleRelease --no-daemon --stacktrace
+      - name: Publish APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk workout-log.apk
+          gh release delete app-latest --yes --cleanup-tag || true
+          gh release create app-latest workout-log.apk --title "筋トレログ（スマホのアプリ）" --notes "最新のアプリのファイルです。workout-log.apk をスマホでダウンロードしてインストールしてください。" --latest

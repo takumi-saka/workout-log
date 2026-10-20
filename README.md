@@ -52,3 +52,11 @@ node --test tests/          # 計算・引き継ぎ・書き出しのテスト
 python3 -m http.server 4178 # リポジトリのルートを配信して、
 # http://localhost:4178/tests/ui.html を開くと画面のテストが動きます
 ```
+
+## スマホのアプリ（APK）
+
+main に入れるたびに、GitHub がスマホに入れるアプリのファイルを作ります（`.github/workflows/android.yml`、中身は `android/`）。
+
+- ダウンロード: https://github.com/takumi-saka/workout-log/releases/download/app-latest/workout-log.apk
+- アプリは上の公開先のページを開くだけの作りです。ページを新しくすれば、入れ直さなくてもアプリの中身が新しくなります。一度開けば電波がなくても動きます。
+- 記録はアプリの中に保存します（Chrome で開いたときの記録とは別です）。

@@ -249,11 +249,26 @@ register({
 
 /* ---------- 端末の機能 ---------- */
 
+/** スマホのアプリ（APK）の中で開いているときだけある窓口 */
+export const bridge = globalThis.AndroidBridge || null;
+
 export function vibrate(pattern) {
-  try { if (navigator.vibrate) navigator.vibrate(pattern); } catch { /* 振動できない端末は何もしない */ }
+  try {
+    if (bridge) {
+      const list = Array.isArray(pattern) ? pattern : [pattern];
+      bridge.vibrate(list.filter((_, i) => i % 2 === 0).reduce((a, b) => a + b, 0));
+      return;
+    }
+    if (navigator.vibrate) navigator.vibrate(pattern);
+  } catch { /* 振動できない端末は何もしない */ }
 }
 
+/** ファイルに書き出す。アプリの中では保存先を選ぶ画面を出す（Google ドライブも選べる）。 */
 export function downloadFile(name, text, type) {
+  if (bridge) {
+    bridge.saveFile(name, type.split(";")[0], text);
+    return "app";
+  }
   const blob = new Blob([text], { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -263,9 +278,15 @@ export function downloadFile(name, text, type) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return "web";
 }
 
+globalThis.__onAndroidSaved = (ok) => toast(ok ? "保存しました" : "保存しませんでした");
+
 export async function copyText(text) {
+  if (bridge) {
+    try { bridge.copyText(text); return true; } catch { return false; }
+  }
   try {
     await navigator.clipboard.writeText(text);
     return true;

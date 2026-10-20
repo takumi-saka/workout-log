@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><title>狭い画面</title>
+<style>body{margin:0;padding:20px;background:#e3e6ef;display:flex;gap:24px}iframe{border:0;border-radius:30px;background:#fff}</style></head>
+<body>
+<iframe id="a" style="width:360px;height:740px"></iframe>
+<iframe id="b" style="width:360px;height:740px"></iframe>
+<script type="module">
+// 狭いスマホ（幅360）で、重い重さ（122.5kg）と長い種目名が収まるか
+import { defaultData, saveData } from "../app/src/store.js";
+import { newActive } from "../app/src/model.js";
+import { todayISO } from "../app/src/util.js";
+const d = defaultData();
+const a = newActive(d, "day-c", todayISO());
+a.createdOn = todayISO();
+a.entries[0].sets.forEach((s) => (s.weight = 122.5));
+d.active = a;
+localStorage.clear();
+saveData(d);
+document.getElementById("a").src = "../app/index.html";
+setTimeout(() => {
+  const d2 = JSON.parse(localStorage.getItem("workout-log-v2"));
+  d2.active.currentKey = d2.active.entries[4].key;
+  d2.active.entries[4].sets.forEach((s) => (s.weight = 102.25));
+  localStorage.setItem("workout-log-v2", JSON.stringify(d2));
+  document.getElementById("b").src = "../app/index.html";
+}, 800);
+</script></body></html>

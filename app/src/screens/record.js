@@ -79,9 +79,11 @@ const shortName = (n) => (n.length > 11 ? `${n.slice(0, 10)}…` : n);
 function weightBig(e, w) {
   if (w === null || w === undefined) return '<span class="n dim">—</span><small>kg<em>押して入力</em></small>';
   if (e.bodyweight && w === 0) return '<span class="jp-big">自重</span><small class="bw-hint">＋で加重<br>−で補助</small>';
-  if (e.bodyweight && w > 0) return `<span class="n">+${num(w)}</span><small>kg<em>加重</em></small>`;
-  if (e.bodyweight && w < 0) return `<span class="n">${num(-w)}</span><small>kg<em>補助</em></small>`;
-  return `<span class="n">${num(w)}</span><small>kg</small>`;
+  const text = e.bodyweight && w > 0 ? `+${num(w)}` : num(Math.abs(w));
+  const size = text.length >= 6 ? " s6" : text.length >= 5 ? " s5" : "";
+  if (e.bodyweight && w > 0) return `<span class="n${size}">${text}</span><small>kg<em>加重</em></small>`;
+  if (e.bodyweight && w < 0) return `<span class="n${size}">${text}</span><small>kg<em>補助</em></small>`;
+  return `<span class="n${size}">${text}</span><small>kg</small>`;
 }
 
 function weightShort(e, w) {

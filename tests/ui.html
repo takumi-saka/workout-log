@@ -77,9 +77,11 @@ async function run() {
   await click('[data-action="rec:complete"]');
   await click('[data-action="rec:rest-skip"]');
   await click('[data-action="rec:complete"]');
-  check("ベンチを終えると次はチンニング（休憩中に案内）", text(".rest-head").includes("チンニング"));
-  await click('[data-action="rec:rest-skip"]');
+  check("ベンチの最後のセットのあとは休憩なしで、すぐチンニングの画面", !q("#recCountdown") && text(".ex-name").startsWith("チンニング"));
   check("チンニングは自重と表示", text("#wVal").includes("自重"));
+  await click('[data-action="rec:rest-start"]');
+  check("休憩ボタンで自分で休憩を始められる", !!q("#recCountdown"));
+  await click('[data-action="rec:rest-skip"]');
   await click('[data-action="rec:key-w"]');
   await click('[data-action="pad:mode"][data-mode="assist"]');
   await type(["1", "0"]);
@@ -159,6 +161,31 @@ async function run() {
   check("コピーする（できないときは手でコピーする画面）", text("#toast .toast-text").includes("コピーしました") || !!q(".copy-box"));
   check("ここまでエラーなし", errors.length === 0);
   if (errors.length) lines.push("   " + errors.join(" / "));
+
+  /* ---- 5b. 片手ずつの種目（B のワンハンド・シーテッドケーブルロー） ---- */
+  await load();
+  await click('[data-action="rec:day-sheet"]');
+  await click('[data-action="rec:pick-day"][data-id="day-b"]');
+  const row = app().data.active.entries[1];
+  await click(`[data-action="rec:switch"][data-key="${row.key}"]`);
+  check("片手ずつの種目は「右」と出る", text(".side-badge") === "右" && text(".complete").includes("1セット目の右を完了"));
+  await click('[data-action="rec:complete"]');
+  await type(["3", "5"]);
+  await sleep(80);
+  check("右を完了すると休憩になり、次は左と案内", !!q("#recCountdown") && text(".rest-head").includes("左"));
+  await click('[data-action="rec:rest-skip"]');
+  check("休憩のあとは左の画面（右の重さが入っている）", text(".side-badge") === "左" && text("#wVal").includes("35"));
+  await click('[data-action="rec:adj"][data-f="r"][data-d="-1"]');
+  await click('[data-action="rec:complete"]');
+  const r0 = app().data.active.entries[1].sets[0];
+  check("左を完了すると1セット目が終わり、回数は右10・左9", r0.done && r0.reps === 10 && r0.repsL === 9);
+  check("1セット目の左のあとも休憩（まだ2セット目がある）", !!q("#recCountdown"));
+  await click('[data-action="rec:rest-skip"]');
+  await click('[data-action="rec:complete"]');
+  await click('[data-action="rec:rest-skip"]');
+  await click('[data-action="rec:complete"]');
+  check("最後のセットの左のあとは休憩なしで次の種目へ", !q("#recCountdown") && !text(".ex-name").startsWith("ワンハンド"));
+  check("ここまでエラーなし（片手ずつ）", errors.length === 0);
 
   /* ---- 6. 前のアプリからの引き継ぎ ---- */
   await load((ls) => ls.setItem("workout-log-v1", JSON.stringify(V1)));

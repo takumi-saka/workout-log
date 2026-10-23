@@ -6,10 +6,10 @@ import { openPicker } from "../picker.js";
 import {
   newActive, currentEntry, activeSetIndex, entryStatus, nextUnfinishedKey, activeTotals, hasProgress, allFinished,
   prFlagsForActive, completeCurrentSet, setWeight, finishActive, activeSummary, nextDayId, lastRecord, lastDateOfDay,
-  validSet, entryFromItem, topSet,
+  validSet, entryFromItem, topSet, activeSide,
 } from "../model.js";
 import { esc, num, clock, todayISO, dateJP, dateShort, hhmm, joinDateTime, minutesBetween, clone } from "../util.js";
-import { weightLabel } from "../export.js";
+import { weightLabel, setText } from "../export.js";
 
 const A = () => ctx.data.active;
 let undoSnapshot = null;
@@ -36,7 +36,7 @@ export function ensureActive({ promptStale = false } = {}) {
 }
 
 function lastActivityDate(a) {
-  const times = a.entries.flatMap((e) => e.sets.filter((s) => s.done && s.doneAt).map((s) => s.doneAt)).sort();
+  const times = a.entries.flatMap((e) => e.sets.flatMap((s) => [s.done && s.doneAt, s.doneR && s.doneAtR].filter(Boolean))).sort();
   return times.length ? todayISO(new Date(times[times.length - 1])) : a.date;
 }
 
@@ -73,6 +73,9 @@ function applyKit() {
 }
 
 const repText = (e, r) => `${e.perSide ? "各側" : ""}${r}回`;
+const SIDE_JP = { R: "右", L: "左" };
+/** 今やる側の重さと回数（片手ずつの種目の左は weightL・repsL。まだなければ右と同じ） */
+const sideVals = (s, side) => (side === "L" ? { w: s.weightL ?? s.weight, r: s.repsL ?? s.reps } : { w: s.weight, r: s.reps });
 const restLeft = (a) => (a.rest ? Math.ceil((a.rest.endsAt - Date.now()) / 1000) : 0);
 const shortName = (n) => (n.length > 11 ? `${n.slice(0, 10)}…` : n);
 
@@ -122,26 +125,39 @@ function prevSetOf(e, i) {
   return { last, p: last.entry.sets.filter(validSet)[i] || null };
 }
 
+function stripesHTML(e, i, side) {
+  if (!e.perSide) return `<span class="stripes">${e.sets.map((t, k) => `<i class="${t.done ? "done" : k === i ? "now" : ""}"></i>`).join("")}</span>`;
+  return `<span class="stripes pairs">${e.sets.map((t, k) => {
+    const r = t.done || t.doneR ? "done" : k === i && side === "R" ? "now" : "";
+    const l = t.done ? "done" : k === i && side === "L" ? "now" : "";
+    return `<span class="pair"><i class="${r}"></i><i class="${l}"></i></span>`;
+  }).join("")}</span>`;
+}
+
 function setView(e, i) {
   const s = e.sets[i];
+  const side = activeSide(e);
+  const v = sideVals(s, side);
   const { last, p } = prevSetOf(e, i);
+  const pv = p ? sideVals(p, side) : null;
+  const sideWord = side ? `の${SIDE_JP[side]}` : "";
   const prev = p
-    ? `前回のこのセット　${weightLabel(e, p.weight)} × ${repText(e, p.reps)}（${dateShort(last.session.date)}）`
+    ? `前回のこのセット${sideWord}　${weightLabel(e, pv.w)} × ${side ? `${pv.r}回` : repText(e, pv.r)}（${dateShort(last.session.date)}）`
     : last ? `前回（${dateShort(last.session.date)}）はこのセットなし` : "この種目は初めての記録です";
   return `${nameHTML(e)}
-    <div class="ex-meta"><span class="stripes">${e.sets.map((t, k) => `<i class="${t.done ? "done" : k === i ? "now" : ""}"></i>`).join("")}</span><span>${i + 1}セット目</span><span class="dim">目標 ${repText(e, e.targetReps)} × ${e.targetSets}</span></div>
+    <div class="ex-meta">${stripesHTML(e, i, side)}<span>${i + 1}セット目</span>${side ? `<span class="side-badge">${SIDE_JP[side]}</span>` : ""}<span class="dim">目標 ${repText(e, e.targetReps)} × ${e.targetSets}</span></div>
     <div class="big">
       <div class="cell">
-        <button class="val" id="wVal" data-action="rec:key-w" aria-label="重さを入力する">${weightBig(e, s.weight)}</button>
+        <button class="val" id="wVal" data-action="rec:key-w" aria-label="重さを入力する">${weightBig(e, v.w)}</button>
         <div class="pm"><button data-action="rec:adj" data-f="w" data-d="-1" aria-label="重さを${num(e.step)}kg減らす">−${num(e.step)}</button><button data-action="rec:adj" data-f="w" data-d="1" aria-label="重さを${num(e.step)}kg増やす">+${num(e.step)}</button></div>
       </div>
       <div class="cell">
-        <button class="val" id="rVal" data-action="rec:key-r" aria-label="回数を入力する"><span class="x">×</span><span class="n">${s.reps}</span><small>回${e.perSide ? "<em>各側</em>" : ""}</small></button>
+        <button class="val" id="rVal" data-action="rec:key-r" aria-label="回数を入力する"><span class="x">×</span><span class="n">${v.r}</span><small>回${side ? `<em>${SIDE_JP[side]}</em>` : ""}</small></button>
         <div class="pm"><button data-action="rec:adj" data-f="r" data-d="-1" aria-label="回数を1回減らす">−1</button><button data-action="rec:adj" data-f="r" data-d="1" aria-label="回数を1回増やす">+1</button></div>
       </div>
     </div>
-    <p class="prev-line">${esc(prev)}</p>
-    <button class="complete" data-action="rec:complete">${ICON.check}${i + 1}セット目を完了</button>`;
+    <div class="prev-row"><p class="prev-line">${esc(prev)}</p><button class="rest-btn" data-action="rec:rest-start" aria-label="休憩のタイマーを始める">${ICON.clock}休憩</button></div>
+    <button class="complete" data-action="rec:complete">${ICON.check}${i + 1}セット目${sideWord}を完了</button>`;
 }
 
 function restView(e, i) {
@@ -150,20 +166,23 @@ function restView(e, i) {
   const segs = 24;
   const on = Math.ceil((left / a.rest.totalSec) * segs);
   const s = e.sets[i];
-  const { p } = prevSetOf(e, i);
+  const side = activeSide(e);
+  const v = sideVals(s, side);
+  const { p: p0 } = prevSetOf(e, i);
+  const p = p0 ? sideVals(p0, side) : null;
   const long = e.name.length > 12;
-  return `<div class="rest-head"><span class="rest-pill"><span>休憩</span></span>次は${long ? "" : `${esc(e.name)}の`}${i + 1}セット目</div>
+  return `<div class="rest-head"><span class="rest-pill"><span>休憩</span></span>次は${long ? "" : `${esc(e.name)}の`}${i + 1}セット目${side ? `の<b class="side-inline">${SIDE_JP[side]}</b>` : ""}</div>
     <div class="countdown n${left <= 10 ? " soon" : ""}" id="recCountdown">${clock(left)}</div>
     <div class="segbar${left <= 10 ? " soon" : ""}" id="recSegbar">${Array.from({ length: segs }, (_, k) => `<i class="${k < on ? "on" : ""}"></i>`).join("")}</div>
     <div class="rest-actions"><button data-action="rec:rest-adj" data-v="-15">−15秒</button><button data-action="rec:rest-adj" data-v="15">+15秒</button><button class="go" data-action="rec:rest-skip">次のセットへ</button></div>
-    <p class="next-preview">次　${long ? `${esc(e.name)}　` : ""}<b>${weightShort(e, s.weight)}${e.bodyweight && s.weight === 0 ? "" : "kg"} × ${repText(e, s.reps)}</b>${p ? `前回 ${weightShort(e, p.weight)} × ${p.reps}` : ""}</p>`;
+    <p class="next-preview">次　${long ? `${esc(e.name)}　` : ""}<b>${weightShort(e, v.w)}${e.bodyweight && v.w === 0 ? "" : "kg"} × ${side ? `${v.r}回` : repText(e, v.r)}</b>${p ? `前回 ${weightShort(e, p.w)} × ${p.r}` : ""}</p>`;
 }
 
 function doneView(e) {
   const nk = nextUnfinishedKey(A(), e.key);
   return `${nameHTML(e)}
     <p class="state-big"><span class="n">${e.sets.length}</span>セット完了</p>
-    <p class="state-sub">${e.sets.map((s) => `${weightShort(e, s.weight)}×${s.reps}`).join("　")}</p>
+    <p class="state-sub">${e.sets.map((s) => `${weightShort(e, s.weight)}×${s.reps}${e.perSide ? `/${s.repsL ?? s.reps}` : ""}`).join("　")}</p>
     <div class="state-actions"><button data-action="rec:add-set">セットを1つ足す</button>${nk ? `<button class="go" data-action="rec:switch" data-key="${nk}">次の種目へ</button>` : ""}</div>`;
 }
 
@@ -203,8 +222,10 @@ function tilesHTML(a, e) {
   return `<div class="tiles" style="grid-template-columns: repeat(${Math.min(4, Math.max(3, e.sets.length))}, 1fr)">${e.sets.map((s, k) => {
     const cls = s.done ? "done" : k === i && !e.skipped ? "now" : "todo";
     const p = lastSets[k];
+    const lr = (x) => (e.perSide ? `<small>/</small>${x.repsL ?? x.reps}` : "");
+    const pv = s.doneR && !s.done ? "右は済み、左がまだ" : `前回 ${p ? `${weightShort(e, p.weight)}×${p.reps}${e.perSide ? `/${p.repsL ?? p.reps}` : ""}` : "なし"}`;
     return `<button class="tile ${cls}" data-action="rec:tile" data-k="${k}"><span class="n no">${k + 1}</span>${s.done ? `<span class="ok">${ICON.check}</span>` : ""}
-      <span class="v">${weightShort(e, s.weight)}<small>×</small>${s.reps}</span><span class="pv">前回 ${p ? `${weightShort(e, p.weight)}×${p.reps}` : "なし"}</span>${flags[k] ? '<span class="tag">自己ベスト</span>' : ""}</button>`;
+      <span class="v">${weightShort(e, s.weight)}<small>×</small>${s.reps}${lr(s)}</span><span class="pv">${pv}</span>${flags[k] ? '<span class="tag">自己ベスト</span>' : ""}</button>`;
   }).join("")}</div>`;
 }
 
@@ -320,7 +341,7 @@ function prBurst(e, set) {
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   const el = document.createElement("div");
   el.className = "pr-burst";
-  el.innerHTML = `<b>自己ベスト更新</b><span>${esc(e.name)}　${esc(weightLabel(e, set.weight))} × ${repText(e, set.reps)}</span>`;
+  el.innerHTML = `<b>自己ベスト更新</b><span>${esc(e.name)}　${esc(setText(e, set))}</span>`;
   $("#recHero").append(el);
   setTimeout(() => el.remove(), 2000);
 }
@@ -336,15 +357,15 @@ function doComplete() {
     const e = currentEntry(a);
     const i = activeSetIndex(e);
     return openKeypad({
-      title: `${e.name}　${i + 1}セット目の重さ`, value: null, unit: "kg", step: e.step,
+      title: `${e.name}　${i + 1}セット目${r.side ? `の${SIDE_JP[r.side]}` : ""}の重さ`, value: null, unit: "kg", step: e.step,
       hint: "この種目は初めてなので、重さを入れてから完了にします",
-      onDone: (v) => { setWeight(e, i, v); doComplete(); },
+      onDone: (v) => { setWeight(e, i, v, r.side === "L" ? "L" : null); doComplete(); },
     });
   }
   undoSnapshot = snap;
   commit({ render: false });
   renderRecord({ swap: true });
-  const text = `${shortName(r.entry.name)} ${r.index + 1}セット目を記録しました`;
+  const text = `${shortName(r.entry.name)} ${r.index + 1}セット目${r.side ? `の${SIDE_JP[r.side]}` : ""}を記録しました`;
   toast(r.autoStarted ? "記録しました。時間も計り始めました" : text, { actionLabel: "元に戻す", onAction: undo });
   if (r.pr) prBurst(r.entry, r.entry.sets[r.index]); else vibrate(25);
   ctx.hooks.afterGo.forEach((fn) => fn(ctx.screen));
@@ -361,7 +382,7 @@ function undo() {
 function curSet() {
   const e = currentEntry(A());
   const i = activeSetIndex(e);
-  return { e, i, s: i >= 0 ? e.sets[i] : null };
+  return { e, i, s: i >= 0 ? e.sets[i] : null, side: activeSide(e) };
 }
 
 function switchDay(dayId) {
@@ -404,9 +425,9 @@ function summaryHTML() {
       <label class="field"><span>終えた時刻</span><input type="time" id="sumEnd" value="${hhmm(now.toISOString())}"></label>
     </div>
     <p class="sum-sec">自己ベスト</p>
-    ${m.prs.length ? m.prs.map(({ entry, set }) => row(esc(entry.name), `<span class="up">${esc(weightLabel(entry, set.weight))} × ${repText(entry, set.reps)}</span>`)).join("") : '<p class="sum-empty">今日はありません。</p>'}
+    ${m.prs.length ? m.prs.map(({ entry, set }) => row(esc(entry.name), `<span class="up">${esc(setText(entry, set))}</span>`)).join("") : '<p class="sum-empty">今日はありません。</p>'}
     <p class="sum-sec">前回より伸びた種目</p>
-    ${m.ups.length ? m.ups.map(({ entry, from, to }) => row(esc(entry.name), `${weightShort(entry, from.weight)}×${from.reps}　から　<span class="up">${weightShort(entry, to.weight)}×${to.reps}</span>`)).join("") : '<p class="sum-empty">今日はありません。</p>'}
+    ${m.ups.length ? m.ups.map(({ entry, from, to }) => row(esc(entry.name), `${esc(setText(entry, from))}　から　<span class="up">${esc(setText(entry, to))}</span>`)).join("") : '<p class="sum-empty">今日はありません。</p>'}
     ${m.skipped.length ? `<p class="sum-sec">やらなかった種目</p><p class="sum-empty">${m.skipped.map(esc).join("、")}</p>` : ""}
     <p class="sum-sec">今日の評価</p>
     <div id="rates">${ratesHTML()}</div>
@@ -476,15 +497,19 @@ register({
     toast("時間をリセットしました。もう一度スタートを押せます");
   },
   "rec:adj": (el) => {
-    const { e, i, s } = curSet();
+    const { e, i, s, side } = curSet();
     if (!s) return;
     const d = Number(el.dataset.d);
+    const v = sideVals(s, side);
     if (el.dataset.f === "w") {
-      let w = s.weight;
-      if (w === null) { if (d < 0) return; w = 0; }
+      let w = v.w;
+      if (w === null || w === undefined) { if (d < 0) return; w = 0; }
       w = Math.round((w + d * e.step) * 100) / 100;
       if (!e.bodyweight) w = Math.max(0, w);
-      setWeight(e, i, w);
+      setWeight(e, i, w, side === "L" ? "L" : null);
+    } else if (side === "L") {
+      s.repsL = Math.max(1, v.r + d);
+      s.touchedL = true;
     } else {
       s.reps = Math.max(1, s.reps + d);
     }
@@ -493,21 +518,34 @@ register({
     bump(el.dataset.f === "w" ? "#wVal" : "#rVal");
   },
   "rec:key-w": () => {
-    const { e, i, s } = curSet();
+    const { e, i, s, side } = curSet();
     if (!s) return;
+    const sw = side ? `の${SIDE_JP[side]}` : "";
     openKeypad({
-      title: `${e.name}　${i + 1}セット目の重さ`, value: s.weight, unit: "kg", step: e.step, bodyweight: e.bodyweight,
+      title: `${e.name}　${i + 1}セット目${sw}の重さ`, value: sideVals(s, side).w, unit: "kg", step: e.step, bodyweight: e.bodyweight,
       hint: e.bodyweight ? "自重は 0 のまま。補助を使うときは「補助」を選んで入力" : "",
-      onDone: (v) => { setWeight(e, i, v); commit({ render: false }); renderRecord(); bump("#wVal"); },
+      onDone: (v) => { setWeight(e, i, v, side === "L" ? "L" : null); commit({ render: false }); renderRecord(); bump("#wVal"); },
     });
   },
   "rec:key-r": () => {
-    const { e, i, s } = curSet();
+    const { e, i, s, side } = curSet();
     if (!s) return;
+    const sw = side ? `の${SIDE_JP[side]}` : "";
     openKeypad({
-      title: `${e.name}　${i + 1}セット目の回数`, value: s.reps, unit: e.perSide ? "回（各側）" : "回", step: 1, integer: true,
-      onDone: (v) => { s.reps = v; commit({ render: false }); renderRecord(); bump("#rVal"); },
+      title: `${e.name}　${i + 1}セット目${sw}の回数`, value: sideVals(s, side).r, unit: "回", step: 1, integer: true,
+      onDone: (v) => {
+        if (side === "L") { s.repsL = v; s.touchedL = true; } else s.reps = v;
+        commit({ render: false }); renderRecord(); bump("#rVal");
+      },
     });
+  },
+  "rec:rest-start": () => {
+    const a = A();
+    const e = currentEntry(a);
+    if (!e) return;
+    a.rest = { endsAt: Date.now() + e.restSec * 1000, totalSec: e.restSec };
+    commit({ render: false });
+    renderRecord({ swap: true });
   },
   "rec:complete": () => doComplete(),
   "rec:rest-adj": (el) => {
@@ -569,7 +607,8 @@ register({
   },
   "rec:menu": () => {
     const e = currentEntry(A());
-    const extra = e.sets.length > 1 && !e.sets[e.sets.length - 1].done;
+    const lastSet = e.sets[e.sets.length - 1];
+    const extra = e.sets.length > 1 && !lastSet.done && !lastSet.doneR;
     openSheet(`<h2>${esc(e.name)}</h2><p class="sub">この種目の操作</p>
       <button class="act" data-action="rec:memo">${ICON.memo}メモを書く</button>
       <button class="act" data-action="rec:add-set">${ICON.plus}セットを1つ足す</button>
@@ -592,7 +631,9 @@ register({
   "rec:add-set": () => {
     const e = currentEntry(A());
     const last = e.sets[e.sets.length - 1];
-    e.sets.push({ weight: last ? last.weight : e.bodyweight ? 0 : null, reps: e.targetReps, done: false, doneAt: null });
+    const ns = { weight: last ? last.weight : e.bodyweight ? 0 : null, reps: e.targetReps, done: false, doneAt: null };
+    if (e.perSide) Object.assign(ns, { weightL: last ? last.weightL ?? last.weight : ns.weight, repsL: e.targetReps, doneR: false, doneAtR: null, touchedL: false });
+    e.sets.push(ns);
     e.skipped = false;
     closeAllSheets();
     commit({ render: false });
@@ -600,7 +641,8 @@ register({
   },
   "rec:remove-set": () => {
     const e = currentEntry(A());
-    if (e.sets.length > 1 && !e.sets[e.sets.length - 1].done) e.sets.pop();
+    const lastSet = e.sets[e.sets.length - 1];
+    if (e.sets.length > 1 && !lastSet.done && !lastSet.doneR) e.sets.pop();
     closeAllSheets();
     commit();
   },
@@ -626,7 +668,7 @@ register({
   "rec:substitute": () => {
     const a = A();
     const e = currentEntry(a);
-    if (e.sets.some((s) => s.done)) return toast("記録したセットがある種目は入れ替えられません。「今日だけ種目を足す」を使ってください");
+    if (e.sets.some((s) => s.done || s.doneR)) return toast("記録したセットがある種目は入れ替えられません。「今日だけ種目を足す」を使ってください");
     closeAllSheets();
     openPicker({
       title: `${e.name}の代わりにやる種目`,
@@ -662,30 +704,46 @@ register({
     const e = currentEntry(A());
     const k = Number(el.dataset.k);
     const s = e.sets[k];
+    const vals = e.perSide
+      ? `<button data-action="rec:tile-w" data-k="${k}" data-side="R"><span>右の重さ</span><b>${esc(weightLabel(e, s.weight))}</b></button>
+        <button data-action="rec:tile-r" data-k="${k}" data-side="R"><span>右の回数</span><b>${s.reps}回</b></button>
+        <button data-action="rec:tile-w" data-k="${k}" data-side="L"><span>左の重さ</span><b>${esc(weightLabel(e, s.weightL ?? s.weight))}</b></button>
+        <button data-action="rec:tile-r" data-k="${k}" data-side="L"><span>左の回数</span><b>${s.repsL ?? s.reps}回</b></button>`
+      : `<button data-action="rec:tile-w" data-k="${k}"><span>重さ</span><b>${esc(weightLabel(e, s.weight))}</b></button>
+        <button data-action="rec:tile-r" data-k="${k}"><span>回数</span><b>${repText(e, s.reps)}</b></button>`;
     openSheet(`<h2>${esc(e.name)}　${k + 1}セット目</h2>
-      <div class="edit-values">
-        <button data-action="rec:tile-w" data-k="${k}"><span>重さ</span><b>${esc(weightLabel(e, s.weight))}</b></button>
-        <button data-action="rec:tile-r" data-k="${k}"><span>回数</span><b>${repText(e, s.reps)}</b></button>
-      </div>
+      <div class="edit-values">${vals}</div>
       <div class="sheet-stack">
-        ${s.done ? `<button class="btn ghost wide" data-action="rec:tile-undone" data-k="${k}">未完了に戻す</button>` : ""}
+        ${s.done || s.doneR ? `<button class="btn ghost wide" data-action="rec:tile-undone" data-k="${k}">未完了に戻す</button>` : ""}
         ${e.sets.length > 1 ? `<button class="btn danger-ghost wide" data-action="rec:tile-del" data-k="${k}">このセットを消す</button>` : ""}
       </div>`);
   },
   "rec:tile-w": (el) => {
     const e = currentEntry(A());
     const k = Number(el.dataset.k);
+    const s = e.sets[k];
+    const left = el.dataset.side === "L";
     openKeypad({
-      title: `${e.name}　${k + 1}セット目の重さ`, value: e.sets[k].weight, unit: "kg", step: e.step, bodyweight: e.bodyweight,
-      onDone: (v) => { if (e.sets[k].done) e.sets[k].weight = v; else setWeight(e, k, v); closeAllSheets(); commit(); },
+      title: `${e.name}　${k + 1}セット目${el.dataset.side ? `の${left ? "左" : "右"}` : ""}の重さ`, value: left ? s.weightL ?? s.weight : s.weight, unit: "kg", step: e.step, bodyweight: e.bodyweight,
+      onDone: (v) => {
+        if (left) { if (s.done) s.weightL = v; else setWeight(e, k, v, "L"); }
+        else if (s.done || s.doneR) s.weight = v;
+        else setWeight(e, k, v);
+        closeAllSheets(); commit();
+      },
     });
   },
   "rec:tile-r": (el) => {
     const e = currentEntry(A());
     const k = Number(el.dataset.k);
+    const s = e.sets[k];
+    const left = el.dataset.side === "L";
     openKeypad({
-      title: `${e.name}　${k + 1}セット目の回数`, value: e.sets[k].reps, unit: "回", step: 1, integer: true,
-      onDone: (v) => { e.sets[k].reps = v; closeAllSheets(); commit(); },
+      title: `${e.name}　${k + 1}セット目${el.dataset.side ? `の${left ? "左" : "右"}` : ""}の回数`, value: left ? s.repsL ?? s.reps : s.reps, unit: "回", step: 1, integer: true,
+      onDone: (v) => {
+        if (left) { s.repsL = v; s.touchedL = true; } else s.reps = v;
+        closeAllSheets(); commit();
+      },
     });
   },
   "rec:tile-undone": (el) => {
@@ -694,6 +752,7 @@ register({
     const s = e.sets[Number(el.dataset.k)];
     s.done = false;
     s.doneAt = null;
+    if (e.perSide) { s.doneR = false; s.doneAtR = null; }
     a.rest = null;
     closeAllSheets();
     commit({ render: false });

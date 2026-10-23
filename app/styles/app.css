@@ -80,6 +80,16 @@ svg.i { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-widt
 .stripes i { width: 22px; height: 8px; border-radius: 2px; transform: skewX(-20deg); background: rgba(255, 255, 255, .24); }
 .stripes i.done { background: #fff; }
 .stripes i.now { background: var(--signal); }
+.stripes.pairs { gap: 6px; }
+.stripes .pair { display: flex; gap: 2px; }
+.stripes .pair i { width: 11px; }
+.side-badge { display: inline-grid; place-items: center; min-width: 30px; height: 26px; padding: 0 8px; border-radius: 13px; background: #fff; color: var(--kit); font-weight: 900; font-size: 15px; }
+.side-inline { display: inline-block; margin-left: 2px; padding: 0 7px; border-radius: 10px; background: #fff; color: var(--kit); font-weight: 900; }
+.prev-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.prev-row .prev-line { flex: 1; margin: 0; }
+.rest-btn { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 11px 0 9px; border-radius: 16px; background: rgba(255, 255, 255, .15); font-size: 12px; font-weight: 900; color: #fff; }
+.rest-btn svg { width: 15px; height: 15px; }
+.rest-btn:active { background: rgba(255, 255, 255, .28); }
 
 .big { display: grid; grid-template-columns: 1.5fr 1fr; gap: 8px; margin-top: 12px; }
 .cell { min-width: 0; }

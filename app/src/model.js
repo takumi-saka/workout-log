@@ -11,15 +11,30 @@ import { uid, todayISO, sum } from "./util.js";
 
 /* ---------- セットの比べ方 ---------- */
 
+/**
+ * 片手ずつの種目のセットは、右（weight・reps）と左（weightL・repsL）を持つ。
+ * 比べるときは弱い方の側（重さ・回数の小さい方）を使う。左を持たない記録（前の版など）は両側同じとみなす。
+ */
+export function effSet(s) {
+  if (!s) return s;
+  const hasL = (s.weightL !== undefined && s.weightL !== null) || (s.repsL !== undefined && s.repsL !== null);
+  if (!hasL) return s;
+  const wL = s.weightL ?? s.weight;
+  const rL = s.repsL ?? s.reps;
+  return { ...s, weight: s.weight === null || s.weight === undefined ? s.weight : Math.min(s.weight, wL), reps: s.reps === null || s.reps === undefined ? s.reps : Math.min(s.reps, rL) };
+}
+
 export function validSet(s) {
-  return !!s && s.reps !== null && s.reps !== undefined && s.reps > 0 && s.weight !== null && s.weight !== undefined;
+  const e = effSet(s);
+  return !!e && e.reps !== null && e.reps !== undefined && e.reps > 0 && e.weight !== null && e.weight !== undefined;
 }
 
 /** a が b より上か（重い方が上。同じ重さなら回数が多い方が上）。自重の補助はマイナスで持つので、補助が少ないほど上になる。 */
 export function beats(a, b) {
   if (!validSet(a)) return false;
   if (!b) return true;
-  return a.weight > b.weight || (a.weight === b.weight && a.reps > b.reps);
+  const x = effSet(a), y = effSet(b);
+  return x.weight > y.weight || (x.weight === y.weight && x.reps > y.reps);
 }
 
 export function topSet(sets) {
@@ -90,6 +105,18 @@ function pickWeight(exercise, lastSets, i) {
   return exercise.bodyweight ? 0 : null;
 }
 
+function pickWeightL(exercise, lastSets, i) {
+  const s = lastSets[i] || lastSets[lastSets.length - 1];
+  if (s && s.weightL !== null && s.weightL !== undefined) return s.weightL;
+  return pickWeight(exercise, lastSets, i);
+}
+
+function newSet(ex, lastSets, i, reps) {
+  const s = { weight: pickWeight(ex, lastSets, i), reps, done: false, doneAt: null };
+  if (ex.perSide) Object.assign(s, { weightL: pickWeightL(ex, lastSets, i), repsL: reps, doneR: false, doneAtR: null, touchedL: false });
+  return s;
+}
+
 /** Day の1種目から、記録中の1種目を作る。重量の初期値はセットごとに前回の値、回数は目標の回数。 */
 export function entryFromItem(data, item, extra = {}) {
   const ex = data.menu.exercises[item.exerciseId];
@@ -112,7 +139,7 @@ export function entryFromItem(data, item, extra = {}) {
     added: false,
     skipped: false,
     memo: "",
-    sets: Array.from({ length: item.sets }, (_, i) => ({ weight: pickWeight(ex, lastSets, i), reps: item.reps, done: false, doneAt: null })),
+    sets: Array.from({ length: item.sets }, (_, i) => newSet(ex, lastSets, i, item.reps)),
     ...extra,
   };
 }
@@ -127,7 +154,14 @@ export function entryStatus(e) {
   if (e.skipped) return "skip";
   const done = e.sets.filter((s) => s.done).length;
   if (e.sets.length && done === e.sets.length) return "done";
-  return done ? "part" : "todo";
+  return done || e.sets.some((s) => s.doneR) ? "part" : "todo";
+}
+
+/** 片手ずつの種目で、今やるのが右か左か（それ以外の種目は null） */
+export function activeSide(e) {
+  const i = activeSetIndex(e);
+  if (!e || !e.perSide || i < 0) return null;
+  return e.sets[i].doneR ? "L" : "R";
 }
 
 export function activeSetIndex(e) {
@@ -153,7 +187,7 @@ export function activeTotals(active) {
 }
 
 export function hasProgress(active) {
-  return !!active && active.entries.some((e) => e.sets.some((s) => s.done));
+  return !!active && active.entries.some((e) => e.sets.some((s) => s.done || s.doneR));
 }
 
 export function allFinished(active) {
@@ -176,37 +210,70 @@ export function prFlagsForActive(data, active) {
   return flags;
 }
 
-/** 今のセットを完了にする。休憩の始まりと、次に出す種目もここで決める。 */
+/**
+ * 今のセットを完了にする。休憩の始まりと、次に出す種目もここで決める。
+ * - 片手ずつの種目は、右 → 休憩 → 左 → 休憩 の順に1側ずつ完了にする。左には、右でやった重さと回数が入る。
+ * - 種目の最後のセットのあとは休憩を入れず、次の種目に移る（片付けて移動するため）。
+ */
 export function completeCurrentSet(data, active, now = new Date()) {
   const e = currentEntry(active);
   const i = activeSetIndex(e);
   if (i < 0) return null;
   const set = e.sets[i];
-  if (set.weight === null || set.weight === undefined) {
-    if (!e.bodyweight) return { needsWeight: true };
-    set.weight = 0;
+  const side = e.perSide ? (set.doneR ? "L" : "R") : null;
+  if (side === "L") {
+    if (set.weightL === null || set.weightL === undefined) set.weightL = set.weight;
+    if (set.repsL === null || set.repsL === undefined) set.repsL = set.reps;
+  }
+  const wKey = side === "L" ? "weightL" : "weight";
+  if (set[wKey] === null || set[wKey] === undefined) {
+    if (!e.bodyweight) return { needsWeight: true, side };
+    set[wKey] = 0;
+  }
+  let autoStarted = false;
+  if (!active.startedAt) { active.startedAt = now.toISOString(); autoStarted = true; }
+  const restAfter = { endsAt: now.getTime() + e.restSec * 1000, totalSec: e.restSec };
+  if (side === "R") {
+    set.doneR = true;
+    set.doneAtR = now.toISOString();
+    if (!set.touchedL) { set.weightL = set.weight; set.repsL = set.reps; }
+    active.rest = restAfter;
+    return { entry: e, index: i, side, pr: false, autoStarted, moved: false, allDone: false };
   }
   set.done = true;
   set.doneAt = now.toISOString();
-  let autoStarted = false;
-  if (!active.startedAt) { active.startedAt = now.toISOString(); autoStarted = true; }
+  const moreHere = activeSetIndex(e) >= 0;
   let moved = false;
-  if (activeSetIndex(e) < 0) {
+  if (!moreHere) {
     const nk = nextUnfinishedKey(active, e.key);
     if (nk) { active.currentKey = nk; moved = true; }
   }
-  const next = currentEntry(active);
-  const hasNext = activeSetIndex(next) >= 0;
-  active.rest = hasNext ? { endsAt: now.getTime() + e.restSec * 1000, totalSec: e.restSec } : null;
+  active.rest = moreHere ? restAfter : null;
   const pr = !!prFlagsForActive(data, active).get(e.key)[i];
-  return { entry: e, index: i, pr, autoStarted, moved, allDone: !hasNext };
+  return { entry: e, index: i, side, pr, autoStarted, moved, allDone: !moreHere && !moved };
 }
 
-/** 重さを変えたとき、同じ種目のまだのセットのうち、前と同じ重さだったものを合わせる */
-export function setWeight(entry, index, weight) {
-  const old = entry.sets[index].weight;
-  entry.sets[index].weight = weight;
-  entry.sets.forEach((s, j) => { if (j > index && !s.done && s.weight === old) s.weight = weight; });
+/**
+ * 重さを変えたとき、同じ種目のまだのセットのうち、前と同じ重さだったものを合わせる。
+ * 片手ずつの種目で右を変えたときは、左も（まだ左だけ変えていなければ）合わせる。side が "L" なら左だけを変える。
+ */
+export function setWeight(entry, index, weight, side = null) {
+  const s = entry.sets[index];
+  if (side === "L") {
+    const oldL = s.weightL ?? s.weight;
+    s.weightL = weight;
+    s.touchedL = true;
+    entry.sets.forEach((t, j) => { if (j > index && !t.done && !t.doneR && (t.weightL ?? t.weight) === oldL) t.weightL = weight; });
+    return;
+  }
+  const old = s.weight;
+  s.weight = weight;
+  if (entry.perSide && !s.done && !s.touchedL) s.weightL = weight;
+  entry.sets.forEach((t, j) => {
+    if (j <= index || t.done) return;
+    if (t.weight === old && !t.doneR) t.weight = weight;
+    if (entry.perSide && !t.touchedL && (t.weightL ?? old) === old) t.weightL = weight;
+  });
 }
 
 /** 記録中のワークアウトを保存用の形にする。完了したセットだけを残し、1セットもやっていない種目はスキップ扱いにする。 */
@@ -238,7 +305,9 @@ export function finishActive(data, active, { startedAt, endedAt, ratings, memo, 
         added: !!e.added,
         skipped: e.skipped || done.length === 0,
         memo: e.memo || "",
-        sets: done.map((s) => ({ weight: s.weight, reps: s.reps, doneAt: s.doneAt })),
+        sets: done.map((s) => (e.perSide
+          ? { weight: s.weight, reps: s.reps, weightL: s.weightL ?? s.weight, repsL: s.repsL ?? s.reps, doneAt: s.doneAt }
+          : { weight: s.weight, reps: s.reps, doneAt: s.doneAt })),
       };
     }),
   };
@@ -284,7 +353,7 @@ export function exerciseSeries(data, exerciseId, since) {
   return exerciseHistory(data, exerciseId)
     .filter(({ session }) => !since || session.date >= since)
     .map(({ session, entry }) => {
-      const top = topSet(entry.sets);
+      const top = effSet(topSet(entry.sets));
       return { date: session.date, sessionId: session.id, weight: top.weight, reps: top.reps, bodyweight: entry.bodyweight };
     });
 }
@@ -295,7 +364,7 @@ export function dayTotalSeries(data, dayId, since) {
     .filter((s) => s.dayId === dayId && (!since || s.date >= since))
     .map((s) => {
       const counted = s.entries.filter((e) => !e.skipped && !e.substituteFor && !e.added && e.sets.some(validSet));
-      const total = sum(counted.map((e) => Math.max(...e.sets.filter(validSet).map((x) => x.weight))));
+      const total = sum(counted.map((e) => Math.max(...e.sets.filter(validSet).map((x) => effSet(x).weight))));
       return { date: s.date, sessionId: s.id, total: Math.round(total * 100) / 100, missing: s.entries.some((e) => e.skipped || e.substituteFor) };
     });
 }

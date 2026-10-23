@@ -4,7 +4,7 @@ import { ctx, kitOf } from "../app-state.js";
 import { ICON, openSheet, register, toast } from "../ui.js";
 import { exerciseHistory, bestEver, prFlagsForSession, validSet } from "../model.js";
 import { esc, dateShort, weekdayOf } from "../util.js";
-import { weightLabel } from "../export.js";
+import { setText } from "../export.js";
 
 export function pageHeader(title, { back = false, settings = true } = {}) {
   return `<header class="page-head">
@@ -21,7 +21,7 @@ export function dayBadge(session) {
 }
 
 export function setsText(entry, flags = []) {
-  return entry.sets.filter(validSet).map((s, i) => `<span class="set-chip${flags[i] ? " pr" : ""}">${esc(weightLabel(entry, s.weight))}×${entry.perSide ? "各側" : ""}${s.reps}</span>`).join("");
+  return entry.sets.filter(validSet).map((s, i) => `<span class="set-chip${flags[i] ? " pr" : ""}">${esc(setText(entry, s))}</span>`).join("");
 }
 
 /** 種目ごとの過去の記録（新しい順） */
@@ -37,7 +37,7 @@ export function openExerciseSheet(exerciseId) {
       <div class="hist-main">${dayBadge(session)}<div class="chips">${setsText(entry, flags)}</div>${entry.memo ? `<p class="hist-memo">${esc(entry.memo)}</p>` : ""}</div></div>`;
   }).join("");
   openSheet(`<h2>${esc(ex.name)}</h2>
-    <p class="sub">${hist.length}回の記録${best && bestWhen ? `　自己ベスト ${esc(weightLabel(ex, best.weight))} × ${best.reps}（${dateShort(bestWhen.session.date)}）` : ""}</p>
+    <p class="sub">${hist.length}回の記録${best && bestWhen ? `　自己ベスト ${esc(setText(ex, best))}（${dateShort(bestWhen.session.date)}）` : ""}</p>
     ${rows || '<p class="empty">まだ記録がありません。</p>'}`, { className: "tall" });
 }
 

@@ -1,7 +1,7 @@
 // 電波がなくても開けるように、アプリのファイルをスマホに取っておく。
 // 新しい版は裏で取り込み、次に開いたときから使われる。版を上げるときは VERSION と src/version.js を合わせる。
 
-const VERSION = "2.0.1";
+const VERSION = "2.0.2";
 const CACHE = `workout-log-${VERSION}`;
 const FONT_CACHE = "workout-log-fonts";
 const ASSETS = [

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><title>片手ずつの種目</title>
+<style>body{margin:0;padding:20px;background:#e3e6ef;display:flex;gap:24px;font-family:sans-serif}figure{margin:0}figcaption{font-size:14px;font-weight:700;margin:0 0 8px}iframe{width:400px;height:860px;border:0;border-radius:36px;background:#fff;display:block}</style></head>
+<body><div id="g" style="display:flex;gap:24px"></div>
+<script type="module">
+// 片手ずつの種目の見た目（右の画面・右のあとの休憩・左の画面）と、ふつうの種目の「休憩」ボタン
+import { defaultData, saveData } from "../app/src/store.js";
+import { newActive, completeCurrentSet } from "../app/src/model.js";
+import { todayISO } from "../app/src/util.js";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function seed(step) {
+  const d = defaultData();
+  const a = newActive(d, step === "bench" ? "day-a" : "day-b", todayISO());
+  a.createdOn = todayISO();
+  if (step !== "bench") {
+    const row = a.entries[1];
+    a.currentKey = row.key;
+    row.sets.forEach((s) => { s.weight = 35; s.weightL = 35; });
+    if (step !== "right") completeCurrentSet(d, a, new Date());
+    if (step === "left") a.rest = null;
+  } else a.entries[0].sets.forEach((s) => (s.weight = 80));
+  d.active = a;
+  saveData(d);
+}
+const shots = [["右の画面", "right"], ["右を完了したあと（休憩）", "rest"], ["左の画面", "left"], ["ふつうの種目（休憩ボタン）", "bench"]];
+const g = document.getElementById("g");
+for (const [cap, step] of shots) {
+  localStorage.clear();
+  seed(step);
+  const fig = document.createElement("figure");
+  fig.innerHTML = `<figcaption>${cap}</figcaption>`;
+  const f = document.createElement("iframe");
+  fig.append(f); g.append(fig);
+  await new Promise((res) => { f.onload = res; f.src = `../app/index.html?s=${step}`; });
+  await sleep(500);
+}
+</script></body></html>

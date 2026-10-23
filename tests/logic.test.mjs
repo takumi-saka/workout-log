@@ -6,9 +6,10 @@ import { defaultData, loadData, saveData, KEY, V1_KEY, dataFromBackup } from "..
 import {
   newActive, completeCurrentSet, currentEntry, activeSetIndex, finishActive, nextDayId, prFlagsForActive,
   activeSummary, exerciseSeries, dayTotalSeries, setWeight, prFlagsForSession, entryStatus, allFinished, activeTotals,
+  activeSide, effSet, beats, hasProgress,
 } from "../app/src/model.js";
 import { migrateV1 } from "../app/src/migrate.js";
-import { toCSV, toLLMText, filterSessions } from "../app/src/export.js";
+import { toCSV, toLLMText, filterSessions, setText } from "../app/src/export.js";
 
 function memoryStorage(init = {}) {
   const m = new Map(Object.entries(init));
@@ -307,4 +308,123 @@ test("今日のまとめ: 前回より伸びた種目とやらなかった種目
   assert.equal(m.ups.length, 1);
   assert.equal(m.ups[0].to.weight, 85);
   assert.equal(m.skipped.length, 4);
+});
+
+/* ---------- 2026-10-23 の直し（片手ずつの休憩・最後のセットのあとの休憩） ---------- */
+
+const at = (m) => new Date(`2026-10-23T18:${String(m).padStart(2, "0")}:00`);
+
+test("種目の最後のセットのあとは休憩を入れず、すぐ次の種目に移る", () => {
+  const d = defaultData();
+  const a = newActive(d, "day-a", "2026-10-23");
+  a.entries[0].sets.forEach((s) => (s.weight = 80));
+  assert.ok(completeCurrentSet(d, a, at(1)));
+  assert.ok(a.rest, "1セット目のあとは休憩");
+  completeCurrentSet(d, a, at(5));
+  const r = completeCurrentSet(d, a, at(9));
+  assert.equal(a.rest, null, "最後のセットのあとは休憩なし");
+  assert.equal(r.moved, true);
+  assert.equal(currentEntry(a).exerciseId, "chin-up");
+});
+
+test("片手ずつの種目: 右 → 休憩 → 左 → 休憩。回数は左右べつべつに残る", () => {
+  const d = defaultData();
+  const a = newActive(d, "day-b", "2026-10-23");
+  const row = a.entries[1];
+  assert.equal(row.exerciseId, "one-hand-cable-row");
+  a.currentKey = row.key;
+  row.sets.forEach((s) => (s.weight = 35));
+  assert.equal(activeSide(row), "R");
+  const r1 = completeCurrentSet(d, a, at(1));
+  assert.equal(r1.side, "R");
+  assert.ok(a.rest, "右のあとに休憩");
+  assert.equal(row.sets[0].done, false);
+  assert.equal(activeSide(row), "L");
+  assert.equal(row.sets[0].weightL, 35, "左には右の重さが入る");
+  row.sets[0].repsL = 9;
+  const r2 = completeCurrentSet(d, a, at(4));
+  assert.equal(r2.side, "L");
+  assert.ok(a.rest, "左のあとにも休憩（まだ2セット目がある）");
+  assert.equal(row.sets[0].done, true);
+  assert.equal(activeSide(row), "R");
+  // 2セット目: 右のあとは休憩、左（最後）のあとは休憩なしで次の種目へ
+  completeCurrentSet(d, a, at(7));
+  assert.ok(a.rest);
+  const r4 = completeCurrentSet(d, a, at(10));
+  assert.equal(a.rest, null);
+  assert.equal(r4.moved, true);
+  const s = finishActive(d, a, { startedAt: a.startedAt, endedAt: at(30).toISOString() });
+  const saved = s.entries.find((e) => e.exerciseId === "one-hand-cable-row").sets;
+  assert.deepEqual(saved.map((x) => [x.reps, x.repsL]), [[10, 9], [10, 10]]);
+  assert.equal(setText(s.entries[1], saved[0]), "35kg×右10・左9");
+  assert.equal(setText(s.entries[1], saved[1]), "35kg×各側10");
+});
+
+test("右だけ終わった状態も「途中」と数える（日をまたいで消されない）", () => {
+  const d = defaultData();
+  const a = newActive(d, "day-b", "2026-10-23");
+  a.currentKey = a.entries[2].key;
+  a.entries[2].sets.forEach((s) => (s.weight = 14));
+  completeCurrentSet(d, a, at(1));
+  assert.equal(hasProgress(a), true);
+  assert.equal(entryStatus(a.entries[2]), "part");
+});
+
+test("右の重さを変えると左も合わせて変わる。左だけ変えたら、右を変えても左はそのまま", () => {
+  const d = defaultData();
+  const a = newActive(d, "day-b", "2026-10-23");
+  const e = a.entries[1];
+  e.sets.forEach((s) => { s.weight = 35; s.weightL = 35; });
+  setWeight(e, 0, 37.5);
+  assert.deepEqual(e.sets.map((s) => [s.weight, s.weightL]), [[37.5, 37.5], [37.5, 37.5]]);
+  setWeight(e, 0, 35, "L");
+  setWeight(e, 0, 40);
+  assert.deepEqual([e.sets[0].weight, e.sets[0].weightL], [40, 35]);
+});
+
+test("片手ずつの自己ベストは弱い方の側で比べる", () => {
+  assert.deepEqual([effSet({ weight: 35, reps: 10, weightL: 35, repsL: 8 }).reps], [8]);
+  assert.equal(beats({ weight: 35, reps: 10, weightL: 35, repsL: 8 }, { weight: 35, reps: 9 }), false);
+  assert.equal(beats({ weight: 35, reps: 10, weightL: 35, repsL: 10 }, { weight: 35, reps: 9 }), true);
+});
+
+test("前の版の片手ずつの記録（左がない）も、各側の記録として読める", () => {
+  const d = defaultData();
+  const old = { weight: 35, reps: 10, doneAt: null };
+  d.sessions.push({ id: "old1", date: "2026-10-16", dayId: "day-b", dayLabel: "B", dayName: "Vスクワット中心", kit: "b", savedAt: "2026-10-16T10:00:00.000Z", ratings: {}, memo: "",
+    entries: [{ exerciseId: "one-hand-cable-row", name: "ワンハンド・シーテッドケーブルロー", category: "背中", bodyweight: false, perSide: true, targetSets: 2, targetReps: 10, skipped: false, memo: "", sets: [old, { ...old, reps: 9 }] }] });
+  assert.equal(setText({ perSide: true, bodyweight: false }, old), "35kg×各側10");
+  const a = newActive(d, "day-b", "2026-10-23");
+  const row = a.entries[1];
+  assert.deepEqual(row.sets.map((s) => [s.weight, s.weightL]), [[35, 35], [35, 35]]);
+  // 書きかけの記録が前の版の形（左の欄がない）でも、右から順に進められる
+  const legacy = newActive(d, "day-b", "2026-10-23");
+  const lr = legacy.entries[1];
+  lr.sets = [{ weight: 35, reps: 10, done: false, doneAt: null }];
+  legacy.currentKey = lr.key;
+  assert.equal(activeSide(lr), "R");
+  completeCurrentSet(d, legacy, at(1));
+  assert.equal(activeSide(lr), "L");
+  completeCurrentSet(d, legacy, at(3));
+  assert.equal(lr.sets[0].done, true);
+  assert.deepEqual([lr.sets[0].weightL, lr.sets[0].repsL], [35, 10]);
+});
+
+test("CSV に左の重さと回数の列が入る", () => {
+  const d = defaultData();
+  const a = newActive(d, "day-b", "2026-10-23");
+  const row = a.entries[1];
+  a.currentKey = row.key;
+  row.sets.forEach((s) => (s.weight = 35));
+  completeCurrentSet(d, a, at(1));
+  row.sets[0].repsL = 9;
+  completeCurrentSet(d, a, at(3));
+  d.sessions.push(finishActive(d, a, { startedAt: a.startedAt, endedAt: at(20).toISOString() }));
+  const csv = toCSV(d, filterSessions(d));
+  const head = csv.slice(1).split("\r\n")[0].split(",");
+  assert.ok(head.includes("weight_left_kg") && head.includes("reps_left"));
+  const line = csv.split("\r\n").find((l) => l.includes("ワンハンド"));
+  const cols = line.split(",");
+  assert.equal(cols[head.indexOf("reps")], "10");
+  assert.equal(cols[head.indexOf("reps_left")], "9");
 });

@@ -4,7 +4,7 @@ import { ctx, setRenderer, commit, renderCurrent, kitOf } from "../app-state.js"
 import { register, $, ICON, openSheet, closeSheet, closeAllSheets, updateSheet, toast, confirmSheet, openKeypad } from "../ui.js";
 import { sortedSessions, prFlagsForSession, topSet } from "../model.js";
 import { esc, todayISO, dateJP, dateShort, weekdayOf, hhmm, minutesBetween, clone } from "../util.js";
-import { weightLabel } from "../export.js";
+import { weightLabel, setText } from "../export.js";
 import { pageHeader, dayBadge } from "./common.js";
 
 function monthKey(iso) { return iso.slice(0, 7); }
@@ -43,7 +43,7 @@ function cardHTML(s) {
   const flags = prFlagsForSession(ctx.data, s);
   const prCount = flags.flat().filter(Boolean).length;
   const done = s.entries.filter((e) => !e.skipped && e.sets.length);
-  const lines = done.slice(0, 2).map((e) => { const t = topSet(e.sets); return t ? `${e.name} ${weightLabel(e, t.weight)}×${t.reps}` : e.name; });
+  const lines = done.slice(0, 2).map((e) => { const t = topSet(e.sets); return t ? `${e.name} ${setText(e, t)}` : e.name; });
   const minutes = s.startedAt && s.endedAt ? minutesBetween(s.startedAt, s.endedAt) : null;
   return `<button class="card hist-card" data-action="hist:open" data-id="${esc(s.id)}">
     <div class="hist-date"><b class="n">${dateShort(s.date)}</b><span>${weekdayOf(s.date)}</span></div>
@@ -86,7 +86,7 @@ function sessionHTML(s) {
   const entries = s.entries.map((e, ei) => {
     const tag = e.substituteFor ? `<span class="sub-tag light">${esc(ctx.data.menu.exercises[e.substituteFor]?.name || "")}の代わり</span>` : e.added ? '<span class="sub-tag light">この日だけ</span>' : "";
     if (e.skipped || !e.sets.length) return `<div class="detail-entry skipped"><p class="detail-name">${esc(e.name)}${tag}</p><p class="detail-skip">スキップ</p></div>`;
-    const chips = e.sets.map((x, si) => `<button class="set-chip${flags[ei] && flags[ei][si] ? " pr" : ""}" data-action="hist:set" data-e="${ei}" data-s="${si}">${esc(weightLabel(e, x.weight))}×${e.perSide ? "各側" : ""}${x.reps}</button>`).join("");
+    const chips = e.sets.map((x, si) => `<button class="set-chip${flags[ei] && flags[ei][si] ? " pr" : ""}" data-action="hist:set" data-e="${ei}" data-s="${si}">${esc(setText(e, x))}</button>`).join("");
     return `<div class="detail-entry"><p class="detail-name">${esc(e.name)}${tag}</p><div class="chips">${chips}</div>${e.memo ? `<p class="hist-memo">${esc(e.memo)}</p>` : ""}</div>`;
   }).join("");
   return `<div class="detail-head">${dayBadge(s)}<div><h2>${dateJP(s.date)}</h2><p class="sub">${esc(`${s.dayLabel} ${s.dayName}`.trim())}　${minutes}</p></div></div>
@@ -134,24 +134,31 @@ register({
     const e = s.entries[Number(el.dataset.e)];
     const si = Number(el.dataset.s);
     const x = e.sets[si];
+    const ds = `data-e="${el.dataset.e}" data-s="${si}"`;
+    const vals = e.perSide
+      ? `<button data-action="hist:set-w" ${ds} data-side="R"><span>右の重さ</span><b>${esc(weightLabel(e, x.weight))}</b></button>
+        <button data-action="hist:set-r" ${ds} data-side="R"><span>右の回数</span><b>${x.reps}回</b></button>
+        <button data-action="hist:set-w" ${ds} data-side="L"><span>左の重さ</span><b>${esc(weightLabel(e, x.weightL ?? x.weight))}</b></button>
+        <button data-action="hist:set-r" ${ds} data-side="L"><span>左の回数</span><b>${x.repsL ?? x.reps}回</b></button>`
+      : `<button data-action="hist:set-w" ${ds}><span>重さ</span><b>${esc(weightLabel(e, x.weight))}</b></button>
+        <button data-action="hist:set-r" ${ds}><span>回数</span><b>${x.reps}回</b></button>`;
     openSheet(`<h2>${esc(e.name)}　${si + 1}セット目</h2>
-      <div class="edit-values">
-        <button data-action="hist:set-w" data-e="${el.dataset.e}" data-s="${si}"><span>重さ</span><b>${esc(weightLabel(e, x.weight))}</b></button>
-        <button data-action="hist:set-r" data-e="${el.dataset.e}" data-s="${si}"><span>回数</span><b>${e.perSide ? "各側" : ""}${x.reps}回</b></button>
-      </div>
+      <div class="edit-values">${vals}</div>
       <div class="sheet-stack"><button class="btn danger-ghost wide" data-action="hist:set-del" data-e="${el.dataset.e}" data-s="${si}">このセットを消す</button></div>`);
   },
   "hist:set-w": (el) => {
     const e = current().entries[Number(el.dataset.e)];
     const x = e.sets[Number(el.dataset.s)];
-    openKeypad({ title: `${e.name}の重さ`, value: x.weight, unit: "kg", step: ctx.data.menu.exercises[e.exerciseId]?.step || 2.5, bodyweight: e.bodyweight,
-      onDone: (v) => { x.weight = v; closeSheet(); commit(); refreshSheet(); } });
+    const left = el.dataset.side === "L";
+    openKeypad({ title: `${e.name}${el.dataset.side ? `の${left ? "左" : "右"}` : ""}の重さ`, value: left ? x.weightL ?? x.weight : x.weight, unit: "kg", step: ctx.data.menu.exercises[e.exerciseId]?.step || 2.5, bodyweight: e.bodyweight,
+      onDone: (v) => { if (left) x.weightL = v; else { if (e.perSide && x.weightL === undefined) x.weightL = x.weight; x.weight = v; } closeSheet(); commit(); refreshSheet(); } });
   },
   "hist:set-r": (el) => {
     const e = current().entries[Number(el.dataset.e)];
     const x = e.sets[Number(el.dataset.s)];
-    openKeypad({ title: `${e.name}の回数`, value: x.reps, unit: "回", step: 1, integer: true,
-      onDone: (v) => { x.reps = v; closeSheet(); commit(); refreshSheet(); } });
+    const left = el.dataset.side === "L";
+    openKeypad({ title: `${e.name}${el.dataset.side ? `の${left ? "左" : "右"}` : ""}の回数`, value: left ? x.repsL ?? x.reps : x.reps, unit: "回", step: 1, integer: true,
+      onDone: (v) => { if (left) x.repsL = v; else { if (e.perSide && x.repsL === undefined) x.repsL = x.reps; x.reps = v; } closeSheet(); commit(); refreshSheet(); } });
   },
   "hist:set-del": (el) => {
     const e = current().entries[Number(el.dataset.e)];
